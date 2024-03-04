@@ -1,6 +1,7 @@
 use futures_core::Stream;
 use pallas::{
     crypto::hash::Hash,
+    ledger::traverse::{Era, MultiEraOutput},
     storage::rolldb::{chain, wal},
 };
 use std::pin::Pin;
@@ -8,32 +9,65 @@ use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 use utxorpc_spec::utxorpc::v1alpha as u5c;
 
+use crate::storage::applydb::ApplyDB;
+
 fn bytes_to_hash(raw: &[u8]) -> Hash<32> {
     let array: [u8; 32] = raw.try_into().unwrap();
     Hash::<32>::new(array)
 }
 
-// fn raw_to_anychain2(raw: &[u8]) -> AnyChainBlock {
-//     let block = any_chain_block::Chain::Raw(Bytes::copy_from_slice(raw));
-//     AnyChainBlock { chain: Some(block) }
-// }
+fn fetch_stxi(hash: Hash<32>, idx: u64, ledger: &ApplyDB) -> u5c::cardano::TxOutput {
+    let (era, cbor) = ledger.get_stxi(hash, idx).unwrap().unwrap();
+    let era = Era::try_from(era).unwrap();
+    let txo = MultiEraOutput::decode(era, &cbor).unwrap();
+    pallas::interop::utxorpc::map_tx_output(&txo)
+}
 
-fn raw_to_anychain(raw: &[u8]) -> u5c::sync::AnyChainBlock {
-    let block = pallas::interop::utxorpc::map_block_cbor(raw);
+fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
+    let mut block = pallas::interop::utxorpc::map_block_cbor(raw);
+
+    let input_refs: Vec<_> = block
+        .body
+        .iter()
+        .flat_map(|b| b.tx.iter())
+        .flat_map(|t| t.inputs.iter())
+        .map(|i| (bytes_to_hash(&i.tx_hash), i.output_index))
+        .collect();
+
+    // TODO: turn this into a multi-get
+    let mut stxis: Vec<_> = input_refs
+        .into_iter()
+        .map(|(hash, idx)| (hash.clone(), idx, fetch_stxi(hash, idx as u64, &ledger)))
+        .collect();
+
+    for tx in block.body.as_mut().unwrap().tx.iter_mut() {
+        for input in tx.inputs.iter_mut() {
+            let key = (bytes_to_hash(&input.tx_hash), input.output_index);
+            let index = stxis
+                .binary_search_by_key(&key, |&(a, b, _)| (a, b))
+                .unwrap();
+
+            let (_, _, stxi) = stxis.remove(index);
+            input.as_output = Some(stxi);
+        }
+    }
+
+    //pallas::interop::utxorpc::map_tx_output(x)
 
     u5c::sync::AnyChainBlock {
         chain: u5c::sync::any_chain_block::Chain::Cardano(block).into(),
     }
 }
 
-fn roll_to_tip_response(log: wal::Log) -> u5c::sync::FollowTipResponse {
+fn roll_to_tip_response(log: wal::Log, ledger: &ApplyDB) -> u5c::sync::FollowTipResponse {
     u5c::sync::FollowTipResponse {
         action: match log {
             wal::Log::Apply(_, _, block) => {
-                u5c::sync::follow_tip_response::Action::Apply(raw_to_anychain(&block)).into()
+                u5c::sync::follow_tip_response::Action::Apply(raw_to_anychain(&block, ledger))
+                    .into()
             }
             wal::Log::Undo(_, _, block) => {
-                u5c::sync::follow_tip_response::Action::Undo(raw_to_anychain(&block)).into()
+                u5c::sync::follow_tip_response::Action::Undo(raw_to_anychain(&block, ledger)).into()
             }
             // TODO: shouldn't we have a u5c event for origin?
             wal::Log::Origin => None,
@@ -45,11 +79,12 @@ fn roll_to_tip_response(log: wal::Log) -> u5c::sync::FollowTipResponse {
 pub struct ChainSyncServiceImpl {
     wal: wal::Store,
     chain: chain::Store,
+    ledger: ApplyDB,
 }
 
 impl ChainSyncServiceImpl {
-    pub fn new(wal: wal::Store, chain: chain::Store) -> Self {
-        Self { wal, chain }
+    pub fn new(wal: wal::Store, chain: chain::Store, ledger: ApplyDB) -> Self {
+        Self { wal, chain, ledger }
     }
 }
 
@@ -75,7 +110,7 @@ impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncService
             .map_err(|_err| Status::internal("can't query block"))?
             .iter()
             .flatten()
-            .map(|b| raw_to_anychain(b))
+            .map(|b| raw_to_anychain(b, &self.ledger))
             .collect();
 
         let response = u5c::sync::FetchBlockResponse { block: out };
@@ -116,7 +151,7 @@ impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncService
             .map(|x| x.ok_or(Status::internal("can't query history")))
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
-            .map(|raw| raw_to_anychain(&raw))
+            .map(|raw| raw_to_anychain(&raw, &self.ledger))
             .collect();
 
         let response = u5c::sync::DumpHistoryResponse {
@@ -139,8 +174,10 @@ impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncService
             .map(|x| (x.index, bytes_to_hash(&x.hash)))
             .collect();
 
+        let ledger = self.ledger.clone();
+
         let s = wal::RollStream::intersect(self.wal.clone(), intersect)
-            .map(|log| Ok(roll_to_tip_response(log)));
+            .map(move |log| Ok(roll_to_tip_response(log, &ledger)));
 
         Ok(Response::new(Box::pin(s)))
     }
