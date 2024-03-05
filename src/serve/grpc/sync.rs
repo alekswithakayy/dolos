@@ -4,6 +4,7 @@ use pallas::{
     ledger::traverse::{Era, MultiEraOutput},
     storage::rolldb::{chain, wal},
 };
+use std::collections::HashMap;
 use std::pin::Pin;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
@@ -31,28 +32,31 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
         .iter()
         .flat_map(|b| b.tx.iter())
         .flat_map(|t| t.inputs.iter())
-        .map(|i| (bytes_to_hash(&i.tx_hash), i.output_index))
+        .map(|i| ((bytes_to_hash(&i.tx_hash), i.output_index), i))
         .collect();
 
-    // TODO: turn this into a multi-get
-    let mut stxis: Vec<_> = input_refs
-        .into_iter()
-        .map(|(hash, idx)| (hash.clone(), idx, fetch_stxi(hash, idx as u64, &ledger)))
+    let stxis: HashMap<_, _> = input_refs
+        .iter()
+        .map(|&(ref key, _)| {
+            let (hash, idx) = key;
+            let stxi = fetch_stxi(*hash, *idx as u64, &ledger);
+            (*key, stxi)
+        })
         .collect();
 
     for tx in block.body.as_mut().unwrap().tx.iter_mut() {
         for input in tx.inputs.iter_mut() {
             let key = (bytes_to_hash(&input.tx_hash), input.output_index);
-            let index = stxis
-                .binary_search_by_key(&key, |&(a, b, _)| (a, b))
-                .unwrap();
-
-            let (_, _, stxi) = stxis.remove(index);
-            input.as_output = Some(stxi);
+            match stxis.get(&key) {
+                Some(stxi) => input.as_output = Some(stxi.clone()),
+                None => panic!(
+                    "STXI not found for hash: {}, index: {}",
+                    bytes_to_hash(&input.tx_hash).to_string(),
+                    input.output_index
+                ),
+            }
         }
     }
-
-    //pallas::interop::utxorpc::map_tx_output(x)
 
     u5c::sync::AnyChainBlock {
         chain: u5c::sync::any_chain_block::Chain::Cardano(block).into(),
