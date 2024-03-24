@@ -50,7 +50,7 @@ fn test_mainnet_upstream() {
     )
     .unwrap();
 
-    let rolldb = pallas::storage::rolldb::wal::Store::open("tmp", 10).unwrap();
+    let rolldb = pallas::storage::rolldb::wal::Store::open("tmp", 10, None).unwrap();
 
     let intersection = rolldb.intersect_options(5).unwrap().into_iter().collect();
 

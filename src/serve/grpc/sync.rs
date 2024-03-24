@@ -1,7 +1,7 @@
 use futures_core::Stream;
 use pallas::{
     crypto::hash::Hash,
-    ledger::traverse::{Era, MultiEraOutput},
+    ledger::traverse::{Era, MultiEraBlock, MultiEraOutput, OriginalHash},
     storage::rolldb::{chain, wal},
 };
 use std::collections::HashMap;
@@ -25,7 +25,17 @@ fn fetch_stxi(hash: Hash<32>, idx: u64, ledger: &ApplyDB) -> u5c::cardano::TxOut
 }
 
 fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
-    let mut block = pallas::interop::utxorpc::map_block_cbor(raw);
+    let block = MultiEraBlock::decode(raw).unwrap();
+
+    let mut datum_map = HashMap::new();
+    for tx in block.txs().into_iter() {
+        for plutus_datum in tx.plutus_data().iter() {
+            let hash = plutus_datum.original_hash();
+            datum_map.insert(hash, plutus_datum.clone());
+        }
+    }
+
+    let mut block = pallas::interop::utxorpc::map_block(&block);
 
     let input_refs: Vec<_> = block
         .body
@@ -48,7 +58,20 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
         for input in tx.inputs.iter_mut() {
             let key = (bytes_to_hash(&input.tx_hash), input.output_index);
             match stxis.get(&key) {
-                Some(stxi) => input.as_output = Some(stxi.clone()),
+                Some(output) => {
+                    let mut as_output = output.clone();
+
+                    if output.datum_hash.len() == 32 {
+                        let datum_hash = Hash::<32>::from(&*output.datum_hash);
+
+                        if let Some(datum_value) = datum_map.get(&datum_hash) {
+                            as_output.datum =
+                                Some(pallas::interop::utxorpc::map_plutus_datum(&datum_value));
+                        }
+                    }
+
+                    input.as_output = Some(as_output);
+                }
                 None => panic!(
                     "STXI not found for hash: {}, index: {}",
                     bytes_to_hash(&input.tx_hash).to_string(),
