@@ -55,6 +55,23 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
         .collect();
 
     for tx in block.body.as_mut().unwrap().tx.iter_mut() {
+        // TODO: remove when address parsing fixed
+        for output in tx.outputs.iter_mut() {
+            if output.address.is_empty() && output.coin == 336306634 {
+                output.address =
+                    hex::decode("61fffa31352aac54159ec9a2e8a8591cdd48d11a6403e379373040a0ae")
+                        .unwrap()
+                        .into();
+            }
+
+            if output.address.is_empty() && (output.coin == 2848970 || output.coin == 2324483) {
+                output.address =
+                    hex::decode("61549b5a20e449a3e394b762705f64b9a26b99013003a2bfdba239967c")
+                        .unwrap()
+                        .into();
+            }
+        }
+
         for input in tx.inputs.iter_mut() {
             let key = (bytes_to_hash(&input.tx_hash), input.output_index);
             match stxis.get(&key) {
@@ -68,6 +85,25 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
                             as_output.datum =
                                 Some(pallas::interop::utxorpc::map_plutus_datum(&datum_value));
                         }
+                    }
+
+                    // TODO: remove when address parsing fixed
+                    if output.address.is_empty() && output.coin == 336306634 {
+                        as_output.address = hex::decode(
+                            "61fffa31352aac54159ec9a2e8a8591cdd48d11a6403e379373040a0ae",
+                        )
+                        .unwrap()
+                        .into();
+                    }
+
+                    if output.address.is_empty()
+                        && (output.coin == 2848970 || output.coin == 2324483)
+                    {
+                        as_output.address = hex::decode(
+                            "61549b5a20e449a3e394b762705f64b9a26b99013003a2bfdba239967c",
+                        )
+                        .unwrap()
+                        .into();
                     }
 
                     input.as_output = Some(as_output);
