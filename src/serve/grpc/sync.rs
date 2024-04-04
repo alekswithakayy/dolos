@@ -54,19 +54,38 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
         })
         .collect();
 
+    // hints for implementing input.as_output in pallas
+    // https://github.com/txpipe/pallas/pull/381/files
+
     for tx in block.body.as_mut().unwrap().tx.iter_mut() {
         // TODO: remove when address parsing fixed
         for output in tx.outputs.iter_mut() {
-            if output.address.is_empty() && output.coin == 336306634 {
+            // inccorect length
+            if output.address.is_empty() && (output.coin == 2848970 || output.coin == 2324483) {
                 output.address =
-                    hex::decode("61fffa31352aac54159ec9a2e8a8591cdd48d11a6403e379373040a0ae")
+                    hex::decode("61549b5a20e449a3e394b762705f64b9a26b99013003a2bfdba239967c00")
                         .unwrap()
                         .into();
             }
 
-            if output.address.is_empty() && (output.coin == 2848970 || output.coin == 2324483) {
+            // incorrect header
+            if output.address.is_empty() && output.coin == 336306634 {
                 output.address =
-                    hex::decode("61549b5a20e449a3e394b762705f64b9a26b99013003a2bfdba239967c")
+                    hex::decode("61fffa31352aac54159ec9a2e8a8591cdd48d11a6403e379373040a0ae126e7735333567367673703778376668787071327074736839676b72")
+                        .unwrap()
+                        .into();
+            }
+
+            if output.address.is_empty() && output.coin == 9000000 {
+                output.address =
+                    hex::decode("616464723171396438663474653079357635743061356e6d383978386a6a33306635616d6b776877716134777666796a64657a7961656c6d6e6e676436643465")
+                        .unwrap()
+                        .into();
+            }
+
+            if output.address.is_empty() && output.coin == 1503763775 {
+                output.address =
+                    hex::decode("61646472317678707a32686668776a327a64736a7976747435686b386335616379327230656b7270717a716a6c71646b386c7a716e357234356e")
                         .unwrap()
                         .into();
             }
@@ -88,22 +107,37 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
                     }
 
                     // TODO: remove when address parsing fixed
-                    if output.address.is_empty() && output.coin == 336306634 {
+                    // inccorect length
+                    if output.address.is_empty()
+                        && (output.coin == 2848970 || output.coin == 2324483)
+                    {
                         as_output.address = hex::decode(
-                            "61fffa31352aac54159ec9a2e8a8591cdd48d11a6403e379373040a0ae",
+                            "61549b5a20e449a3e394b762705f64b9a26b99013003a2bfdba239967c00",
                         )
                         .unwrap()
                         .into();
                     }
 
-                    if output.address.is_empty()
-                        && (output.coin == 2848970 || output.coin == 2324483)
-                    {
-                        as_output.address = hex::decode(
-                            "61549b5a20e449a3e394b762705f64b9a26b99013003a2bfdba239967c",
-                        )
-                        .unwrap()
-                        .into();
+                    // incorrect header
+                    if output.address.is_empty() && output.coin == 336306634 {
+                        as_output.address =
+                            hex::decode("61fffa31352aac54159ec9a2e8a8591cdd48d11a6403e379373040a0ae126e7735333567367673703778376668787071327074736839676b72")
+                                .unwrap()
+                                .into();
+                    }
+
+                    if output.address.is_empty() && output.coin == 9000000 {
+                        as_output.address =
+                            hex::decode("616464723171396438663474653079357635743061356e6d383978386a6a33306635616d6b776877716134777666796a64657a7961656c6d6e6e676436643465")
+                                .unwrap()
+                                .into();
+                    }
+
+                    if output.address.is_empty() && output.coin == 1503763775 {
+                        as_output.address =
+                            hex::decode("61646472317678707a32686668776a327a64736a7976747435686b386335616379327230656b7270717a716a6c71646b386c7a716e357234356e")
+                                .unwrap()
+                                .into();
                     }
 
                     input.as_output = Some(as_output);
