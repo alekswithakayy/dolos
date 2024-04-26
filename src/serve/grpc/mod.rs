@@ -1,14 +1,15 @@
-use std::path::PathBuf;
-
+use pallas::interop::utxorpc::spec as u5c;
 use pallas::storage::rolldb::{chain, wal};
 use serde::{Deserialize, Serialize};
+use std::{path::PathBuf, sync::Arc};
 use tonic::transport::{Certificate, Server, ServerTlsConfig};
-
 use tracing::info;
-use utxorpc_spec::utxorpc::v1alpha as u5c;
 
-use crate::{prelude::*, storage::applydb::ApplyDB};
+use crate::ledger::store::LedgerStore;
+use crate::{prelude::*, submit::Transaction};
 
+mod query;
+mod submit;
 mod sync;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -21,15 +22,28 @@ pub async fn serve(
     config: Config,
     wal: wal::Store,
     chain: chain::Store,
-    ledger: ApplyDB,
+    ledger: LedgerStore,
+    mempool: Arc<crate::submit::MempoolState>,
+    txs_out: gasket::messaging::tokio::ChannelSendAdapter<Vec<Transaction>>,
 ) -> Result<(), Error> {
     let addr = config.listen_address.parse().unwrap();
-    let service = sync::ChainSyncServiceImpl::new(wal, chain, ledger);
-    let service = u5c::sync::chain_sync_service_server::ChainSyncServiceServer::new(service);
+
+    let sync_service = sync::ChainSyncServiceImpl::new(wal, chain, ledger);
+    let sync_service =
+        u5c::sync::chain_sync_service_server::ChainSyncServiceServer::new(sync_service);
+
+    let query_service = query::QueryServiceImpl::new(ledger);
+    let query_service = u5c::query::query_service_server::QueryServiceServer::new(query_service);
+
+    let submit_service = submit::SubmitServiceImpl::new(txs_out, mempool);
+    let submit_service =
+        u5c::submit::submit_service_server::SubmitServiceServer::new(submit_service);
 
     let reflection = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(u5c::cardano::FILE_DESCRIPTOR_SET)
         .register_encoded_file_descriptor_set(u5c::sync::FILE_DESCRIPTOR_SET)
+        .register_encoded_file_descriptor_set(u5c::query::FILE_DESCRIPTOR_SET)
+        .register_encoded_file_descriptor_set(u5c::submit::FILE_DESCRIPTOR_SET)
         .register_encoded_file_descriptor_set(protoc_wkt::google::protobuf::FILE_DESCRIPTOR_SET)
         .build()
         .unwrap();
@@ -48,9 +62,11 @@ pub async fn serve(
 
     info!("serving via gRPC on address: {}", config.listen_address);
 
+    // to allow GrpcWeb we must enable http1
     server
-        // GrpcWeb is over http1 so we must enable it.
-        .add_service(tonic_web::enable(service))
+        .add_service(tonic_web::enable(sync_service))
+        .add_service(tonic_web::enable(query_service))
+        .add_service(tonic_web::enable(submit_service))
         .add_service(reflection)
         .serve(addr)
         .await

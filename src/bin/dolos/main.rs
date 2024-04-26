@@ -7,8 +7,8 @@ use std::path::PathBuf;
 mod common;
 mod daemon;
 mod data;
+mod doctor;
 mod eval;
-mod serve;
 mod sync;
 
 #[cfg(feature = "mithril")]
@@ -19,8 +19,8 @@ enum Command {
     Daemon(daemon::Args),
     Sync(sync::Args),
     Data(data::Args),
-    Serve(serve::Args),
     Eval(eval::Args),
+    Doctor(doctor::Args),
 
     #[cfg(feature = "mithril")]
     Bootstrap(bootstrap::Args),
@@ -34,18 +34,22 @@ struct Cli {
     #[command(subcommand)]
     command: Command,
 
+    #[arg(global = true)]
     config: Option<std::path::PathBuf>,
 }
 
 #[derive(Deserialize)]
-pub struct RolldbConfig {
+pub struct StorageConfig {
     path: Option<std::path::PathBuf>,
-    k_param: Option<u64>,
+    wal_size: Option<u64>,
+    immutable_overlap: Option<u64>,
 }
 
 #[derive(Deserialize)]
-pub struct GenesisFileRef {
-    path: PathBuf,
+pub struct GenesisConfig {
+    byron_path: PathBuf,
+    shelley_path: PathBuf,
+    alonzo_path: PathBuf,
     // TODO: add hash of genesis for runtime verification
     // hash: String,
 }
@@ -65,12 +69,13 @@ pub struct LoggingConfig {
 
 #[derive(Deserialize)]
 pub struct Config {
-    pub rolldb: RolldbConfig,
-    pub upstream: dolos::sync::Config,
+    pub upstream: dolos::model::UpstreamConfig,
+    pub storage: StorageConfig,
+    pub genesis: GenesisConfig,
+    pub sync: dolos::sync::Config,
     pub serve: dolos::serve::Config,
+    pub submit: dolos::submit::Config,
     pub retries: Option<gasket::retries::Policy>,
-    pub byron: GenesisFileRef,
-    pub shelley: GenesisFileRef,
     #[serde(default)]
     pub logging: LoggingConfig,
 }
@@ -107,8 +112,8 @@ fn main() -> Result<()> {
         Command::Daemon(x) => daemon::run(config, &x)?,
         Command::Sync(x) => sync::run(&config, &x)?,
         Command::Data(x) => data::run(&config, &x)?,
-        Command::Serve(x) => serve::run(config, &x)?,
         Command::Eval(x) => eval::run(&config, &x)?,
+        Command::Doctor(x) => doctor::run(&config, &x)?,
 
         #[cfg(feature = "mithril")]
         Command::Bootstrap(x) => bootstrap::run(&config, &x)?,

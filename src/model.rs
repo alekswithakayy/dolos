@@ -1,6 +1,8 @@
 use pallas::{crypto::hash::Hash, network::miniprotocols::Point};
+use serde::Deserialize;
 
 pub type BlockSlot = u64;
+pub type BlockHeight = u64;
 pub type BlockHash = Hash<32>;
 pub type RawBlock = Vec<u8>;
 pub type TxHash = Hash<32>;
@@ -26,4 +28,13 @@ pub enum RollEvent {
     Apply(BlockSlot, BlockHash, RawBlock),
     Undo(BlockSlot, BlockHash, RawBlock),
     Origin,
+}
+
+#[derive(Deserialize)]
+pub struct UpstreamConfig {
+    pub peer_address: String,
+    pub network_magic: u64,
+
+    #[serde(default)]
+    pub is_testnet: bool,
 }

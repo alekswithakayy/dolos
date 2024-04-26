@@ -5,8 +5,6 @@ use mithril_client::{ClientBuilder, MessageBuilder};
 use pallas::ledger::traverse::MultiEraBlock;
 use tracing::{debug, info, trace, warn};
 
-use dolos::prelude::*;
-
 use crate::common::Stores;
 
 #[derive(Debug, clap::Args)]
@@ -21,15 +19,19 @@ pub struct Args {
     download_dir: String,
 
     /// Skip the bootstrap if there's already data in the stores
-    #[arg(long, short, action)]
+    #[arg(long, action)]
     skip_if_not_empty: bool,
 
     /// Delete any existing data and continue with bootstrap
     #[arg(long, short, action)]
     force: bool,
 
+    /// Assume the snapshot is already available in the download dir
+    #[arg(long, action)]
+    skip_download: bool,
+
     /// Retain downloaded snapshot instead of deleting it
-    #[arg(long, short, action)]
+    #[arg(long, action)]
     retain_snapshot: bool,
 }
 
@@ -139,14 +141,28 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
         bail!("data stores must be empty to execute bootstrap");
     }
 
-    tokio::runtime::Runtime::new()
-        .unwrap()
-        .block_on(fetch_and_validate_snapshot(args))
-        .map_err(|err| miette::miette!(err.to_string()))
-        .context("fetching and validating mithril snapshot")?;
+    let target_directory = Path::new(&args.download_dir);
 
-    let byron_genesis =
-        pallas::ledger::configs::byron::from_file(&config.byron.path).map_err(Error::config)?;
+    if !target_directory.exists() {
+        std::fs::create_dir_all(target_directory)
+            .map_err(|err| miette::miette!(err.to_string()))
+            .context(format!(
+                "Failed to create directory: {}",
+                target_directory.display()
+            ))?;
+    }
+
+    if !args.skip_download {
+        tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(fetch_and_validate_snapshot(args))
+            .map_err(|err| miette::miette!(err.to_string()))
+            .context("fetching and validating mithril snapshot")?;
+    } else {
+        warn!("skipping download, assuming download dir has snapshot and it's validated")
+    }
+
+    let (byron, _, _) = crate::common::open_genesis_files(&config.genesis)?;
 
     let immutable_path = Path::new(&args.download_dir).join("immutable");
 
@@ -157,18 +173,22 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
     let (mut wal, mut chain, mut ledger) = empty_stores.unwrap();
 
     ledger
-        .apply_origin(&byron_genesis)
+        .apply(&[dolos::ledger::compute_origin_delta(&byron)])
         .into_diagnostic()
         .context("applying origin utxos")?;
 
     for block in iter {
         let block = match block {
-            Ok(x) => x,
+            Ok(x) if x.is_empty() => {
+                warn!("can't continue reading from immutable db");
+                break;
+            }
             Err(err) => {
                 dbg!(err);
                 warn!("can't continue reading from immutable db");
                 break;
             }
+            Ok(x) => x,
         };
 
         let blockd = MultiEraBlock::decode(&block)
@@ -182,8 +202,16 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
             .into_diagnostic()
             .context("adding chain entry")?;
 
+        let context = dolos::ledger::load_slice_for_block(&blockd, &ledger)
+            .into_diagnostic()
+            .context("loading context for block")?;
+
+        let delta = dolos::ledger::compute_delta(&blockd, context)
+            .into_diagnostic()
+            .context("computing ledger delta")?;
+
         ledger
-            .apply_block(&blockd)
+            .apply(&[delta])
             .into_diagnostic()
             .context("applyting ledger block")?;
     }

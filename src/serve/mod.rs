@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use futures_util::future::join_all;
 use pallas::storage::rolldb::{chain, wal};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::{prelude::*, storage::applydb::ApplyDB};
+use crate::{ledger::store::LedgerStore, prelude::*};
 
 pub mod grpc;
 pub mod ouroboros;
@@ -22,7 +24,9 @@ pub async fn serve(
     config: Config,
     wal: wal::Store,
     chain: chain::Store,
-    ledger: ApplyDB,
+    ledger: LedgerStore,
+    mempool: Arc<crate::submit::MempoolState>,
+    txs_out: gasket::messaging::tokio::ChannelSendAdapter<Vec<crate::submit::Transaction>>,
 ) -> Result<(), Error> {
     let mut tasks = vec![];
 
@@ -33,6 +37,8 @@ pub async fn serve(
             wal.clone(),
             chain.clone(),
             ledger,
+            mempool,
+            txs_out,
         )));
     }
 

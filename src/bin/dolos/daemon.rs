@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use miette::{Context, IntoDiagnostic};
 
 #[derive(Debug, clap::Args)]
@@ -8,34 +10,45 @@ pub async fn run(config: super::Config, _args: &Args) -> miette::Result<()> {
     crate::common::setup_tracing(&config.logging)?;
 
     let (wal, chain, ledger) = crate::common::open_data_stores(&config)?;
+    let (byron, _, _) = crate::common::open_genesis_files(&config.genesis)?;
 
-    let byron_genesis = pallas::ledger::configs::byron::from_file(&config.byron.path)
-        .into_diagnostic()
-        .context("loading byron genesis config")?;
+    let (txs_out, txs_in) = gasket::messaging::tokio::mpsc_channel(64);
 
-    let shelley_genesis = pallas::ledger::configs::shelley::from_file(&config.shelley.path)
-        .into_diagnostic()
-        .context("loading shelley genesis config")?;
+    let mempool = Arc::new(dolos::submit::MempoolState::default());
 
     let server = tokio::spawn(dolos::serve::serve(
         config.serve,
         wal.clone(),
         chain.clone(),
         ledger.clone(),
+        mempool.clone(),
+        txs_out,
     ));
 
-    dolos::sync::pipeline(
+    let sync = dolos::sync::pipeline(
+        &config.sync,
         &config.upstream,
-        wal,
+        wal.clone(),
         chain,
         ledger,
-        byron_genesis,
-        shelley_genesis,
+        byron,
         &config.retries,
     )
     .into_diagnostic()
-    .context("bootstrapping sync pipeline")?
-    .block();
+    .context("bootstrapping sync pipeline")?;
+
+    let submit = dolos::submit::pipeline(
+        &config.submit,
+        &config.upstream,
+        wal,
+        mempool.clone(),
+        txs_in,
+        &config.retries,
+    )
+    .into_diagnostic()
+    .context("bootstrapping submit pipeline")?;
+
+    gasket::daemon::Daemon(sync.into_iter().chain(submit).collect()).block();
 
     server.abort();
 

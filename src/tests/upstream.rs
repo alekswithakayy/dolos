@@ -59,6 +59,7 @@ fn test_mainnet_upstream() {
     let mut upstream = crate::sync::pull::Stage::new(
         "relays-new.cardano-mainnet.iohk.io:3001".into(),
         764824073,
+        20,
         intersection,
     );
 

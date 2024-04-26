@@ -1,0 +1,15 @@
+{
+  "index": {
+    "title": "Home",
+    "type": "page",
+    "display": "hidden",
+    "theme": {
+      "layout": "full"
+    }
+  },
+  "introduction": "Introduction",
+  "installation": "Installation",
+  "configuration": "Configuration",
+  "running": "Running",
+  "apis": "APIs"
+}
