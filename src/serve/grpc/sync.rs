@@ -2,7 +2,7 @@ use futures_core::Stream;
 use pallas::interop::utxorpc::spec as u5c;
 use pallas::{
     crypto::hash::Hash,
-    ledger::traverse::{Era, MultiEraBlock, MultiEraOutput, OriginalHash},
+    ledger::traverse::{MultiEraBlock, MultiEraOutput, OriginalHash},
     storage::rolldb::{chain, wal},
 };
 use std::collections::HashMap;
@@ -10,21 +10,15 @@ use std::pin::Pin;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status};
 
-use crate::storage::applydb::ApplyDB;
+use crate::ledger;
+use crate::ledger::store::LedgerStore;
 
 fn bytes_to_hash(raw: &[u8]) -> Hash<32> {
     let array: [u8; 32] = raw.try_into().unwrap();
     Hash::<32>::new(array)
 }
 
-fn fetch_stxi(hash: Hash<32>, idx: u64, ledger: &ApplyDB) -> u5c::cardano::TxOutput {
-    let (era, cbor) = ledger.get_stxi(hash, idx).unwrap().unwrap();
-    let era = Era::try_from(era).unwrap();
-    let txo = MultiEraOutput::decode(era, &cbor).unwrap();
-    pallas::interop::utxorpc::map_tx_output(&txo)
-}
-
-fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
+fn raw_to_anychain(raw: &[u8], ledger: &LedgerStore) -> u5c::sync::AnyChainBlock {
     let block = MultiEraBlock::decode(raw).unwrap();
 
     let mut datum_map = HashMap::new();
@@ -42,20 +36,22 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
         .iter()
         .flat_map(|b| b.tx.iter())
         .flat_map(|t| t.inputs.iter())
-        .map(|i| ((bytes_to_hash(&i.tx_hash), i.output_index), i))
+        .map(|i| ledger::TxoRef(bytes_to_hash(&i.tx_hash), i.output_index))
         .collect();
 
-    let stxis: HashMap<_, _> = input_refs
-        .iter()
-        .map(|&(ref key, _)| {
-            let (hash, idx) = key;
-            let stxi = fetch_stxi(*hash, *idx as u64, &ledger);
-            (*key, stxi)
+    let stxis: HashMap<ledger::TxoRef, u5c::cardano::TxOutput> = ledger
+        .get_utxos(input_refs)
+        .unwrap()
+        .into_iter()
+        .map(|(ref_, era_cbor)| {
+            (
+                ref_.clone(),
+                pallas::interop::utxorpc::map_tx_output(
+                    &MultiEraOutput::decode(era_cbor.0, &era_cbor.1).unwrap(),
+                ),
+            )
         })
         .collect();
-
-    // hints for implementing input.as_output in pallas
-    // https://github.com/txpipe/pallas/pull/381/files
 
     for tx in block.body.as_mut().unwrap().tx.iter_mut() {
         // TODO: remove when address parsing fixed
@@ -92,7 +88,7 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
         }
 
         for input in tx.inputs.iter_mut() {
-            let key = (bytes_to_hash(&input.tx_hash), input.output_index);
+            let key = ledger::TxoRef(bytes_to_hash(&input.tx_hash), input.output_index);
             match stxis.get(&key) {
                 Some(output) => {
                     let mut as_output = output.clone();
@@ -156,7 +152,7 @@ fn raw_to_anychain(raw: &[u8], ledger: &ApplyDB) -> u5c::sync::AnyChainBlock {
     }
 }
 
-fn roll_to_tip_response(log: wal::Log, ledger: &ApplyDB) -> u5c::sync::FollowTipResponse {
+fn roll_to_tip_response(log: wal::Log, ledger: &LedgerStore) -> u5c::sync::FollowTipResponse {
     u5c::sync::FollowTipResponse {
         action: match log {
             wal::Log::Apply(_, _, block) => {
@@ -176,11 +172,11 @@ fn roll_to_tip_response(log: wal::Log, ledger: &ApplyDB) -> u5c::sync::FollowTip
 pub struct ChainSyncServiceImpl {
     wal: wal::Store,
     chain: chain::Store,
-    ledger: ApplyDB,
+    ledger: LedgerStore,
 }
 
 impl ChainSyncServiceImpl {
-    pub fn new(wal: wal::Store, chain: chain::Store, ledger: ApplyDB) -> Self {
+    pub fn new(wal: wal::Store, chain: chain::Store, ledger: LedgerStore) -> Self {
         Self { wal, chain, ledger }
     }
 }
