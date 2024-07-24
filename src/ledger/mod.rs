@@ -311,14 +311,14 @@ pub fn import_block_batch<S: LedgerStore>(
 
     store.apply(&deltas)?;
 
-    let tip = deltas
-        .last()
-        .and_then(|x| x.new_position.as_ref())
-        .map(|x| x.0)
-        .unwrap();
+    // let tip = deltas
+    //     .last()
+    //     .and_then(|x| x.new_position.as_ref())
+    //     .map(|x| x.0)
+    //     .unwrap();
 
-    let to_finalize = lastest_immutable_slot(tip, byron, shelley);
-    store.finalize(to_finalize)?;
+    // let to_finalize = lastest_immutable_slot(tip, byron, shelley);
+    // store.finalize(to_finalize)?;
 
     Ok(())
 }
