@@ -8,6 +8,7 @@ mod common;
 mod daemon;
 mod doctor;
 mod eval;
+mod feedback;
 mod serve;
 mod sync;
 
@@ -65,6 +66,13 @@ struct Cli {
 #[derive(Serialize, Deserialize)]
 pub struct StorageConfig {
     path: std::path::PathBuf,
+
+    /// Size (in Mb) of memory allocated for WAL caching
+    wal_cache: Option<usize>,
+
+    /// Size (in Mb) of memory allocated for ledger caching
+    ledger_cache: Option<usize>,
+
     #[allow(dead_code)]
     wal_size: Option<u64>,
 }
@@ -73,6 +81,8 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             path: PathBuf::from("data"),
+            wal_cache: None,
+            ledger_cache: None,
             wal_size: None,
         }
     }
@@ -110,6 +120,9 @@ pub struct LoggingConfig {
     max_level: tracing::Level,
 
     #[serde(default)]
+    include_tokio: bool,
+
+    #[serde(default)]
     include_pallas: bool,
 
     #[serde(default)]
@@ -120,6 +133,7 @@ impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             max_level: tracing::Level::INFO,
+            include_tokio: Default::default(),
             include_pallas: Default::default(),
             include_grpc: Default::default(),
         }
@@ -170,12 +184,14 @@ fn main() -> Result<()> {
         .into_diagnostic()
         .context("parsing configuration");
 
+    let feedback = crate::feedback::Feedback::default();
+
     match (config, args.command) {
         (Ok(config), Command::Daemon(args)) => daemon::run(config, &args),
         (Ok(config), Command::Sync(args)) => sync::run(&config, &args),
         (Ok(config), Command::Serve(args)) => serve::run(config, &args),
         (Ok(config), Command::Eval(args)) => eval::run(&config, &args),
-        (Ok(config), Command::Doctor(args)) => doctor::run(&config, &args),
+        (Ok(config), Command::Doctor(args)) => doctor::run(&config, &args, &feedback),
 
         // the init command is special because it knows how to execute with or without a valid
         // configuration, that is why we pass the whole result and let the command logic decide what
@@ -187,7 +203,7 @@ fn main() -> Result<()> {
         (Ok(config), Command::Data(args)) => data::run(&config, &args),
 
         #[cfg(feature = "mithril")]
-        (Ok(config), Command::Bootstrap(args)) => bootstrap::run(&config, &args),
+        (Ok(config), Command::Bootstrap(args)) => bootstrap::run(&config, &args, &feedback),
 
         (Err(x), _) => Err(x),
     }

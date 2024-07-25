@@ -2,6 +2,126 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2024-07-19
+
+### 🐛 Bug Fixes
+
+- *(bootstrap)* Save ledger to disk before attempting upgrade (#310)
+
+### 🚜 Refactor
+
+- *(state)* Treat address parsing as a fallible operation (#309)
+
+### ⚙️ Miscellaneous Tasks
+
+- Use Pallas edge with long address fix (#311)
+
+## [0.13.0] - 2024-07-18
+
+### 🚀 Features
+
+- Bootstrap in-memory and with defered indexes (#308)
+
+### 🐛 Bug Fixes
+
+- *(state)* Use cursor value to decide if db is empty (#302)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.13.0
+
+## [0.12.0] - 2024-07-16
+
+### 🚀 Features
+
+- *(serve)* Include raw-bytes in follow-tip method (#299)
+- Implement state storage v2 (#295)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update Pallas with u5c spec v0.7.0 (#300)
+- Update Pallas to v0.29 (#301)
+- Release dolos version 0.12.0
+
+## [0.11.1] - 2024-07-14
+
+### 🐛 Bug Fixes
+
+- *(serve)* Don't break socket listening loop on connect error (#297)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update Pallas with input ordering interop fix (#296)
+- Release dolos version 0.11.1
+
+## [0.11.0] - 2024-07-13
+
+### 🚜 Refactor
+
+- Split ledger into state and transition (#288)
+- Support side-by-side state schemas (#290)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update u5c spec to v0.6 (#289)
+- Update Pallas with redeemer interop fix (#291)
+- Release dolos version 0.11.0
+
+## [0.10.1] - 2024-07-05
+
+### 🐛 Bug Fixes
+
+- Change Mithril dep to use rustls (#284)
+
+### 📚 Documentation
+
+- Simplify readme (#281)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.10.1
+
+## [0.10.0] - 2024-06-24
+
+### 🚀 Features
+
+- Implement input resolver for gRPC endpoint (#149)
+- Implement utxorpc watch module (#270)
+- Integrate tokio traces & debug console (#275)
+- *(storage)* Allow configurable cache size (#277)
+
+### 🐛 Bug Fixes
+
+- Handle SIGTERM for graceful shutdown (#273)
+- *(grpc)* Avoid panic in hash value parsing (#274)
+
+### 🚜 Refactor
+
+- *(grpc)* Improve sync mapping (#276)
+
+### 📚 Documentation
+
+- Improve configuration docs (#260)
+- Add bootstrap instructions (#261)
+- Add quickstart guide (#262)
+- Improve running instructions (#263)
+- Improve API documentation (#264)
+- Document latest config changes (#279)
+
+### 🔧 Continuous Integration
+
+- Remove mdbook workflow (#203)
+
+### 🧪 Testing
+
+- Implement pparams testing (#217)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update Pallas to v0.27 (#265)
+- Reset example configs (#269)
+- Release dolos version 0.10.0
+
 ## [0.9.0] - 2024-05-28
 
 ### 🚀 Features
@@ -52,6 +172,7 @@ All notable changes to this project will be documented in this file.
 - Exclude heavy features from Pallas (#257)
 - Move release config to cargo toml (#258)
 - Update example config files (#259)
+- Release dolos version 0.9.0
 
 ## [0.8.0] - 2024-05-18
 

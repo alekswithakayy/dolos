@@ -1,6 +1,6 @@
 use futures_core::Stream;
 use futures_util::StreamExt;
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use pallas::crypto::hash::Hash;
 use pallas::interop::utxorpc as interop;
 use pallas::interop::utxorpc::{spec as u5c, Mapper};
@@ -9,11 +9,14 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use tonic::{Request, Response, Status};
 
-use crate::ledger;
+use crate::state::LedgerStore;
 use crate::wal::{self, RawBlock, WalReader as _};
 
-fn u5c_to_chain_point(block_ref: u5c::sync::BlockRef) -> wal::ChainPoint {
-    wal::ChainPoint::Specific(block_ref.index, block_ref.hash.as_ref().into())
+fn u5c_to_chain_point(block_ref: u5c::sync::BlockRef) -> Result<wal::ChainPoint, Status> {
+    Ok(wal::ChainPoint::Specific(
+        block_ref.index,
+        super::convert::bytes_to_hash32(&block_ref.hash)?,
+    ))
 }
 
 // fn raw_to_anychain2(raw: &[u8]) -> AnyChainBlock {
@@ -21,10 +24,7 @@ fn u5c_to_chain_point(block_ref: u5c::sync::BlockRef) -> wal::ChainPoint {
 //     AnyChainBlock { chain: Some(block) }
 // }
 
-fn raw_to_anychain(
-    mapper: &Mapper<ledger::store::LedgerStore>,
-    raw: &wal::RawBlock,
-) -> u5c::sync::AnyChainBlock {
+fn raw_to_anychain(mapper: &Mapper<LedgerStore>, raw: &wal::RawBlock) -> u5c::sync::AnyChainBlock {
     let wal::RawBlock { body, .. } = raw;
 
     let block = MultiEraBlock::decode(body).unwrap();
@@ -42,14 +42,13 @@ fn raw_to_anychain(
     for tx in block.body.as_mut().unwrap().tx.iter_mut() {
         for input in tx.inputs.iter_mut() {
             let mut output = input.as_output.clone().unwrap();
-            
+
             if output.datum_hash.len() == 32 {
                 let bytes: [u8; 32] = output.datum_hash.to_vec().try_into().unwrap();
                 let datum_hash = Hash::new(bytes);
 
                 if let Some(datum_value) = datum_map.get(&datum_hash) {
-                    output.datum =
-                        Some(mapper.map_plutus_datum(&datum_value));
+                    output.datum = Some(mapper.map_plutus_datum(&datum_value));
                     input.as_output = Some(output);
                 }
             }
@@ -57,12 +56,22 @@ fn raw_to_anychain(
     }
 
     u5c::sync::AnyChainBlock {
+        native_bytes: body.to_vec().into(),
         chain: u5c::sync::any_chain_block::Chain::Cardano(block).into(),
     }
 }
 
+fn raw_to_blockref(raw: &wal::RawBlock) -> u5c::sync::BlockRef {
+    let RawBlock { slot, hash, .. } = raw;
+
+    u5c::sync::BlockRef {
+        index: *slot,
+        hash: hash.to_vec().into(),
+    }
+}
+
 fn roll_to_tip_response(
-    mapper: &Mapper<ledger::store::LedgerStore>,
+    mapper: &Mapper<LedgerStore>,
     log: &wal::LogValue,
 ) -> u5c::sync::FollowTipResponse {
     u5c::sync::FollowTipResponse {
@@ -79,13 +88,13 @@ fn roll_to_tip_response(
     }
 }
 
-pub struct ChainSyncServiceImpl {
+pub struct SyncServiceImpl {
     wal: wal::redb::WalStore,
-    mapper: interop::Mapper<ledger::store::LedgerStore>,
+    mapper: interop::Mapper<LedgerStore>,
 }
 
-impl ChainSyncServiceImpl {
-    pub fn new(wal: wal::redb::WalStore, ledger: ledger::store::LedgerStore) -> Self {
+impl SyncServiceImpl {
+    pub fn new(wal: wal::redb::WalStore, ledger: LedgerStore) -> Self {
         Self {
             wal,
             mapper: Mapper::new(ledger),
@@ -94,7 +103,7 @@ impl ChainSyncServiceImpl {
 }
 
 #[async_trait::async_trait]
-impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncServiceImpl {
+impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
     type FollowTipStream =
         Pin<Box<dyn Stream<Item = Result<u5c::sync::FollowTipResponse, Status>> + Send + 'static>>;
 
@@ -104,7 +113,11 @@ impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncService
     ) -> Result<Response<u5c::sync::FetchBlockResponse>, Status> {
         let message = request.into_inner();
 
-        let points: Vec<_> = message.r#ref.into_iter().map(u5c_to_chain_point).collect();
+        let points: Vec<_> = message
+            .r#ref
+            .into_iter()
+            .map(u5c_to_chain_point)
+            .try_collect()?;
 
         let out = self
             .wal
@@ -125,38 +138,33 @@ impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncService
     ) -> Result<Response<u5c::sync::DumpHistoryResponse>, Status> {
         let msg = request.into_inner();
 
-        let from = msg.start_token.map(u5c_to_chain_point);
+        let from = msg.start_token.map(u5c_to_chain_point).transpose()?;
 
         let len = msg.max_items as usize + 1;
 
-        let mut page = self
+        let page = self
             .wal
             .read_block_page(from.as_ref(), len)
-            .map_err(|_err| Status::internal("can't query block"))?
-            .collect_vec();
+            .map_err(|_err| Status::internal("can't query block"))?;
 
-        let next_token = if page.len() == len {
-            let RawBlock { slot, hash, .. } = page.remove(len - 1);
-
-            Some(u5c::sync::BlockRef {
-                index: slot,
-                hash: hash.to_vec().into(),
-            })
-        } else {
-            None
-        };
-
-        let blocks = page
+        let (items, next_token): (_, Vec<_>) = page
             .into_iter()
             .filter_map(|x| match probe::block_era(x.body.as_ref()) {
                 probe::Outcome::EpochBoundary => None,
-                _ => Some(raw_to_anychain(&self.mapper, &x)),
+                _ => Some(x),
             })
-            .collect();
+            .enumerate()
+            .partition_map(|(idx, x)| {
+                if idx < len - 1 {
+                    Either::Left(raw_to_anychain(&self.mapper, &x))
+                } else {
+                    Either::Right(raw_to_blockref(&x))
+                }
+            });
 
         let response = u5c::sync::DumpHistoryResponse {
-            block: blocks,
-            next_token,
+            block: items,
+            next_token: next_token.into_iter().next(),
         };
 
         Ok(Response::new(response))
@@ -179,7 +187,7 @@ impl u5c::sync::chain_sync_service_server::ChainSyncService for ChainSyncService
                 .intersect
                 .into_iter()
                 .map(u5c_to_chain_point)
-                .collect();
+                .try_collect()?;
 
             self.wal
                 .find_intersect(&intersect)
