@@ -1,8 +1,11 @@
 use futures_core::Stream;
 use futures_util::StreamExt;
 use itertools::{Either, Itertools};
+use pallas::crypto::hash::Hash;
 use pallas::interop::utxorpc as interop;
 use pallas::interop::utxorpc::{spec as u5c, Mapper};
+use pallas::ledger::traverse::{probe, MultiEraBlock, OriginalHash};
+use std::collections::HashMap;
 use std::pin::Pin;
 use tonic::{Request, Response, Status};
 
@@ -23,7 +26,34 @@ fn u5c_to_chain_point(block_ref: u5c::sync::BlockRef) -> Result<wal::ChainPoint,
 
 fn raw_to_anychain(mapper: &Mapper<LedgerStore>, raw: &wal::RawBlock) -> u5c::sync::AnyChainBlock {
     let wal::RawBlock { body, .. } = raw;
-    let block = mapper.map_block_cbor(body);
+
+    let block = MultiEraBlock::decode(body).unwrap();
+
+    let mut datum_map = HashMap::new();
+    for tx in block.txs().into_iter() {
+        for plutus_datum in tx.plutus_data().iter() {
+            let hash = plutus_datum.original_hash();
+            datum_map.insert(hash, plutus_datum.clone());
+        }
+    }
+
+    let mut block = mapper.map_block_cbor(body);
+
+    for tx in block.body.as_mut().unwrap().tx.iter_mut() {
+        for input in tx.inputs.iter_mut() {
+            let mut output = input.as_output.clone().unwrap();
+
+            if output.datum_hash.len() == 32 {
+                let bytes: [u8; 32] = output.datum_hash.to_vec().try_into().unwrap();
+                let datum_hash = Hash::new(bytes);
+
+                if let Some(datum_value) = datum_map.get(&datum_hash) {
+                    output.datum = Some(mapper.map_plutus_datum(&datum_value));
+                    input.as_output = Some(output);
+                }
+            }
+        }
+    }
 
     u5c::sync::AnyChainBlock {
         native_bytes: body.to_vec().into(),
@@ -115,11 +145,18 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
         let page = self
             .wal
             .read_block_page(from.as_ref(), len)
-            .map_err(|_err| Status::internal("can't query block"))?;
+            .map_err(|_err| Status::internal("can't query block"))?
+            .filter(|x| match probe::block_era(x.body.as_ref()) {
+                probe::Outcome::EpochBoundary => false,
+                _ => true,
+            })
+            .collect::<Vec<_>>();
+
+        let actual_len = page.len();
 
         let (items, next_token): (_, Vec<_>) =
             page.into_iter().enumerate().partition_map(|(idx, x)| {
-                if idx < len - 1 {
+                if idx < actual_len - 1 {
                     Either::Left(raw_to_anychain(&self.mapper, &x))
                 } else {
                     Either::Right(raw_to_blockref(&x))

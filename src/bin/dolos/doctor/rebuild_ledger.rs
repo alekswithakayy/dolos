@@ -20,13 +20,8 @@ pub fn run(config: &crate::Config, _args: &Args, feedback: &Feedback) -> miette:
 
     let (byron, shelley, _) = crate::common::open_genesis_files(&config.genesis)?;
 
-    let wal = crate::common::open_wal(config).context("opening WAL store")?;
-
-    let light = dolos::state::redb::LedgerStore::in_memory_v2_light()
-        .into_diagnostic()
-        .context("creating in-memory state store")?;
-
-    let mut light = dolos::state::LedgerStore::Redb(light);
+    let (wal, mut light) =
+        crate::common::open_data_stores(config).context("opening data stores")?;
 
     if light
         .is_empty()
