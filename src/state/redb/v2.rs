@@ -69,7 +69,7 @@ impl LedgerStore {
 
         for (slot, value) in cursors {
             tables::CursorTable::compact(&wx, slot)?;
-            tables::UtxosTable::compact(&wx, slot, &value.tombstones)?;
+            // tables::UtxosTable::compact(&wx, slot, &value.tombstones)?;
         }
 
         wx.commit()?;
