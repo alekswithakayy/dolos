@@ -20,7 +20,8 @@ pub fn run(config: &crate::Config, _args: &Args, feedback: &Feedback) -> miette:
 
     let (byron, shelley, _) = crate::common::open_genesis_files(&config.genesis)?;
 
-    let (wal, mut light) = crate::common::open_data_stores(config).context("opening data stores")?;
+    let (wal, mut light) =
+        crate::common::open_data_stores(config).context("opening data stores")?;
 
     // let wal = crate::common::open_wal(config).context("opening WAL store")?;
 
