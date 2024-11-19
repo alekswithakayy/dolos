@@ -2,6 +2,83 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.2] - 2024-11-02
+
+### 🐛 Bug Fixes
+
+- Use s3 accelerate endpoint for snapshots (#377)
+
+## [0.18.1] - 2024-10-25
+
+### 🐛 Bug Fixes
+
+- Adjust ignored failing test after refactor (#372)
+- Include Conway genesis in Docker image (#373)
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix lint warnings (#374)
+- Release dolos version 0.18.1
+
+## [0.18.0] - 2024-10-24
+
+### 🚀 Features
+
+- Add flag to quit when reaching tip (#369)
+
+### 🐛 Bug Fixes
+
+- Fix openssl dependency regression (#368)
+- Avoid double open of wal during bootstrap (#371)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.18.0
+
+## [0.17.0] - 2024-10-17
+
+### 🚀 Features
+
+- Skip redundant bootstrap in overriding init (#364)
+
+### 🐛 Bug Fixes
+
+- Apply missing pparams in update logic (#361)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.17.0
+
+## [0.16.0] - 2024-10-13
+
+### 🚀 Features
+
+- Introduce direct snapshot bootstrap (#336)
+- Automate WAL housekeeping procedure (#347)
+- Allow manual wal pruning via CLI (#349)
+- Ask for history pruning during init (#351)
+- Improve bootstrap experience (#353)
+- Trigger bootstrap right after init (#354)
+
+### 🐛 Bug Fixes
+
+- Fix typo in bootstrap question (#271)
+- Fix build / lint issues (#346)
+- Make CORS config optional (#348)
+- Avoid crashing on WAL pruning edge case (#350)
+- Use saturating substract in housekeeping logic (#355)
+
+### 📚 Documentation
+
+- Add reference to wal history setting (#352)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update blaze docs with latest version (#338)
+- Add support for CORS in gRPC-web (#339)
+- Fix lint warnings (#356)
+- Release dolos version 0.16.0
+
 ## [0.15.1] - 2024-09-07
 
 ### 🐛 Bug Fixes
@@ -12,6 +89,10 @@ All notable changes to this project will be documented in this file.
 ### 📚 Documentation
 
 - Add Blaze example (#334)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.15.1
 
 ## [0.15.0] - 2024-09-06
 

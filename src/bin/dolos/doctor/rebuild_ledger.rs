@@ -18,7 +18,7 @@ pub fn run(config: &crate::Config, _args: &Args, feedback: &Feedback) -> miette:
     let progress = feedback.slot_progress_bar();
     progress.set_message("rebuilding ledger");
 
-    let (byron, shelley, _) = crate::common::open_genesis_files(&config.genesis)?;
+    let (byron, shelley, _, _) = crate::common::open_genesis_files(&config.genesis)?;
 
     let (wal, mut light) =
         crate::common::open_data_stores(config).context("opening data stores")?;

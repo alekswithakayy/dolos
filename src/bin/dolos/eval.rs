@@ -2,7 +2,7 @@ use dolos::ledger::{PParamsBody, TxoRef};
 use itertools::*;
 use miette::{Context, IntoDiagnostic};
 use pallas::{
-    applying::{validate, Environment as ValidationContext, UTxOs},
+    applying::{validate_tx, CertState, Environment as ValidationContext, UTxOs},
     ledger::traverse::{Era, MultiEraInput, MultiEraOutput, MultiEraUpdate},
 };
 use std::{borrow::Cow, path::PathBuf};
@@ -55,7 +55,7 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
         .into_diagnostic()
         .context("resolving utxo")?;
 
-    let (byron, shelley, alonzo) = crate::common::open_genesis_files(&config.genesis)?;
+    let (byron, shelley, alonzo, conway) = crate::common::open_genesis_files(&config.genesis)?;
 
     let mut utxos2 = UTxOs::new();
 
@@ -92,6 +92,7 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
             byron: &byron,
             shelley: &shelley,
             alonzo: &alonzo,
+            conway: &conway,
         },
         &updates,
         args.epoch,
@@ -102,9 +103,12 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
         prot_magic: config.upstream.network_magic as u32,
         network_id: args.network_id,
         prot_params: pparams,
+        acnt: None,
     };
 
-    validate(&tx, &utxos2, &context).unwrap();
+    let mut cert_state = CertState::default();
+
+    validate_tx(&tx, 0, &context, &utxos2, &mut cert_state).unwrap();
 
     Ok(())
 }
