@@ -200,6 +200,8 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
                 .ok_or(Status::internal("can't find WAL sequence"))?
         };
 
+        let mapper = self.mapper.clone();
+
         // Find the intersect, skip 1 block, then convert each to a tip response
         // We skip 1 block to mimic the ouroboros chainsync miniprotocol convention
         // We both agree that the intersection point is in our past, so it doesn't
@@ -209,7 +211,6 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
 
         let reset = once(async { Ok(point_to_reset_tip_response(point)) });
 
-        let mapper = self.mapper.clone();
         let ledger = self.ledger.clone();
         let wal = self.wal.clone();
 
