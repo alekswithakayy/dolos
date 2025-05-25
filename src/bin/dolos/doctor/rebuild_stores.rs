@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use dolos::{
-    ledger,
-    wal::{self, RawBlock, ReadUtils, WalReader as _},
+    ledger::mutable_slots,
+    wal::{self, WalBlockReader, WalReader as _},
 };
 use itertools::Itertools;
 use miette::{Context, IntoDiagnostic};
@@ -10,26 +12,27 @@ use tracing::debug;
 use crate::feedback::Feedback;
 
 #[derive(Debug, clap::Args)]
-pub struct Args;
+pub struct Args {
+    #[arg(short, long, default_value_t = 500)]
+    pub chunk: usize,
+}
 
-pub fn run(config: &crate::Config, _args: &Args, feedback: &Feedback) -> miette::Result<()> {
+pub fn run(config: &crate::Config, args: &Args, feedback: &Feedback) -> miette::Result<()> {
     //crate::common::setup_tracing(&config.logging)?;
 
     let progress = feedback.slot_progress_bar();
     progress.set_message("rebuilding ledger");
 
-    let (byron, shelley, _, _) = crate::common::open_genesis_files(&config.genesis)?;
-
-    let (wal, mut light) =
-        crate::common::open_data_stores(config).context("opening data stores")?;
-
-    // let wal = crate::common::open_wal(config).context("opening WAL store")?;
+    let wal = crate::common::open_wal_store(config)?;
+    let genesis = Arc::new(crate::common::open_genesis_files(&config.genesis)?);
 
     // let light = dolos::state::redb::LedgerStore::in_memory_v2_light()
     //     .into_diagnostic()
     //     .context("creating in-memory state store")?;
 
-    // let mut light = dolos::state::LedgerStore::Redb(light);
+    // let light = dolos::state::LedgerStore::Redb(light);
+
+    let light = crate::common::open_ledger_store(config)?;
 
     if light
         .is_empty()
@@ -38,13 +41,17 @@ pub fn run(config: &crate::Config, _args: &Args, feedback: &Feedback) -> miette:
     {
         debug!("importing genesis");
 
-        let delta = dolos::ledger::compute_origin_delta(&byron);
+        let delta = dolos::ledger::compute_origin_delta(&genesis);
 
         light
             .apply(&[delta])
             .into_diagnostic()
             .context("applying origin utxos")?;
     }
+
+    let root = crate::common::ensure_storage_path(config)?;
+
+    let chain = crate::common::open_chain_store(config)?;
 
     let (_, tip) = wal
         .find_tip()
@@ -57,41 +64,43 @@ pub fn run(config: &crate::Config, _args: &Args, feedback: &Feedback) -> miette:
         wal::ChainPoint::Specific(slot, _) => progress.set_length(slot),
     }
 
-    let wal_seq = light
-        .cursor()
+    // Amount of slots until unmutability is guaranteed.
+    let lookahead = mutable_slots(&genesis);
+    let remaining = WalBlockReader::try_new(&wal, None, lookahead)
         .into_diagnostic()
-        .context("finding ledger cursor")?
-        .map(|ledger::ChainPoint(s, h)| wal.assert_point(&wal::ChainPoint::Specific(s, h)))
-        .transpose()
-        .into_diagnostic()
-        .context("locating wal sequence")?;
+        .context("creating wal block reader")?;
 
-    let remaining = wal
-        .crawl_from(wal_seq)
-        .into_diagnostic()
-        .context("crawling wal")?
-        .filter_forward()
-        .into_blocks()
-        .flatten();
-
-    for chunk in remaining.chunks(100).into_iter() {
-        let bodies = chunk.map(|RawBlock { body, .. }| body).collect_vec();
-
-        let blocks: Vec<_> = bodies
+    for chunk in remaining.chunks(args.chunk).into_iter() {
+        let collected = chunk.collect_vec();
+        let blocks: Vec<_> = collected
             .iter()
-            .map(|b| MultiEraBlock::decode(b))
+            .map(|b| MultiEraBlock::decode(&b.body))
             .try_collect()
             .into_diagnostic()
             .context("decoding blocks")?;
 
-        dolos::state::apply_block_batch(&blocks, &mut light, &byron, &shelley)
+        let deltas = dolos::state::calculate_block_batch_deltas(&blocks, &light)
             .into_diagnostic()
-            .context("importing blocks to ledger store")?;
+            .context("calculating batch deltas.")?;
+
+        chain
+            .apply(&deltas)
+            .into_diagnostic()
+            .context("applying deltas to chain")?;
+
+        dolos::state::apply_delta_batch(
+            deltas,
+            &light,
+            &genesis,
+            config.storage.max_ledger_history,
+        )
+        .into_diagnostic()
+        .context("importing blocks to ledger store")?;
 
         blocks.last().inspect(|b| progress.set_position(b.slot()));
     }
 
-    let ledger_path = crate::common::define_ledger_path(config).context("finding ledger path")?;
+    let ledger_path = root.join("ledger");
 
     let disk = dolos::state::redb::LedgerStore::open_v2_light(ledger_path, None)
         .into_diagnostic()

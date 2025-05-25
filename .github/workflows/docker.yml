@@ -1,6 +1,9 @@
 name: Docker
 on:
   push:
+    branches:
+      - "main"
+      - "demeter"
     tags:
       - "v*"
 
@@ -12,12 +15,12 @@ jobs:
       matrix:
         include:
           - release_for: Linux-x86_64
-            build_on: ubuntu-latest
+            build_on: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             args: "--locked --release"
 
           - release_for: Linux-arm64
-            build_on: buildjet-2vcpu-ubuntu-2204-arm
+            build_on: ubuntu-22.04-arm
             target: "aarch64-unknown-linux-gnu"
             args: "--locked --release"
 
@@ -74,9 +77,10 @@ jobs:
           images: ghcr.io/txpipe/dolos
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
-            type=semver,pattern=v{{major}}
-            type=semver,pattern=v{{major}}.{{minor}}
-            type=semver,pattern=v{{version}}
+            type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern=v{{major}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern=v{{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern=v{{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=sha
 
       - name: Login to DockerHub
@@ -101,7 +105,7 @@ jobs:
           mv .github/image/bin/dolos-Linux-x86_64 .github/image/bin/dolos-Linux-amd64
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .github/image
           platforms: linux/arm64,linux/amd64

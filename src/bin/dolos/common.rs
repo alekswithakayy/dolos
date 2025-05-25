@@ -1,62 +1,90 @@
-use dolos::{state, wal};
+use dolos::{chain, ledger::pparams::Genesis, state, wal};
 use miette::{Context as _, IntoDiagnostic};
-use pallas::ledger::configs::alonzo::GenesisFile as AlonzoFile;
-use pallas::ledger::configs::byron::GenesisFile as ByronFile;
-use pallas::ledger::configs::conway::GenesisFile as ConwayFile;
-use pallas::ledger::configs::shelley::GenesisFile as ShelleyFile;
-use std::{path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::{filter::Targets, prelude::*};
 
 use dolos::prelude::*;
 
 use crate::{GenesisConfig, LoggingConfig};
 
-pub type Stores = (wal::redb::WalStore, state::LedgerStore);
+pub type Stores = (wal::redb::WalStore, state::LedgerStore, chain::ChainStore);
 
-pub fn open_wal(config: &crate::Config) -> Result<wal::redb::WalStore, Error> {
-    let root = &config.storage.path;
+pub fn ensure_storage_path(config: &crate::Config) -> Result<PathBuf, Error> {
+    let root = config.storage.path.as_ref().ok_or(Error::config(
+        "can't define storage path for ephemeral config",
+    ))?;
 
-    std::fs::create_dir_all(root).map_err(Error::storage)?;
+    std::fs::create_dir_all(root)?;
+
+    Ok(root.to_path_buf())
+}
+
+pub fn open_wal_store(config: &crate::Config) -> Result<wal::redb::WalStore, Error> {
+    let root = ensure_storage_path(config)?;
 
     let wal = wal::redb::WalStore::open(
         root.join("wal"),
         config.storage.wal_cache,
         config.storage.max_wal_history,
-    )
-    .map_err(Error::storage)?;
+    )?;
 
     Ok(wal)
 }
 
-pub fn define_ledger_path(config: &crate::Config) -> Result<PathBuf, Error> {
-    let root = &config.storage.path;
-    std::fs::create_dir_all(root).map_err(Error::storage)?;
+pub fn open_chain_store(config: &crate::Config) -> Result<chain::ChainStore, Error> {
+    let root = ensure_storage_path(config)?;
 
-    let ledger = root.join("ledger");
+    let chain = chain::redb::ChainStore::open(
+        root.join("chain"),
+        config.storage.chain_cache,
+        config.storage.max_chain_history,
+    )?;
 
-    Ok(ledger)
+    Ok(chain.into())
 }
 
-pub fn open_data_stores(config: &crate::Config) -> Result<Stores, Error> {
-    let root = &config.storage.path;
+pub fn open_ledger_store(config: &crate::Config) -> Result<state::LedgerStore, Error> {
+    let root = ensure_storage_path(config)?;
 
-    std::fs::create_dir_all(root).map_err(Error::storage)?;
+    let ledger = state::redb::LedgerStore::open(root.join("ledger"), config.storage.ledger_cache)?;
 
-    let wal = wal::redb::WalStore::open(
-        root.join("wal"),
-        config.storage.wal_cache,
-        config.storage.max_wal_history,
-    )
-    .map_err(Error::storage)?;
+    Ok(ledger.into())
+}
 
-    let ledger = state::redb::LedgerStore::open(root.join("ledger"), config.storage.ledger_cache)
-        .map_err(Error::storage)?
-        .into();
+pub fn open_persistent_data_stores(config: &crate::Config) -> Result<Stores, Error> {
+    if config.storage.version == StorageVersion::V0 {
+        error!("Storage should be removed and init procedure run again.");
+        return Err(Error::StorageError("Invalid store version".to_string()));
+    }
 
-    Ok((wal, ledger))
+    let wal = open_wal_store(config)?;
+    let ledger = open_ledger_store(config)?;
+    let chain = open_chain_store(config)?;
+
+    Ok((wal, ledger, chain))
+}
+
+pub fn create_ephemeral_data_stores(config: &crate::Config) -> Result<Stores, Error> {
+    let mut wal = wal::redb::WalStore::memory(config.storage.max_wal_history)?;
+
+    wal.initialize_from_origin()?;
+
+    let ledger = state::LedgerStore::Redb(state::redb::LedgerStore::in_memory_v2()?);
+
+    let chain = chain::ChainStore::Redb(chain::redb::ChainStore::in_memory_v1()?);
+
+    Ok((wal, ledger, chain))
+}
+
+pub fn setup_data_stores(config: &crate::Config) -> Result<Stores, Error> {
+    if config.storage.is_ephemeral() {
+        create_ephemeral_data_stores(config)
+    } else {
+        open_persistent_data_stores(config)
+    }
 }
 
 pub fn setup_tracing(config: &LoggingConfig) -> miette::Result<()> {
@@ -80,6 +108,14 @@ pub fn setup_tracing(config: &LoggingConfig) -> miette::Result<()> {
         filter = filter.with_target("tonic", level);
     }
 
+    if config.include_trp {
+        filter = filter.with_target("jsonrpsee-server", level);
+    }
+
+    if config.include_minibf {
+        filter = filter.with_target("tower_http", level);
+    }
+
     #[cfg(not(feature = "debug"))]
     {
         tracing_subscriber::registry()
@@ -100,9 +136,7 @@ pub fn setup_tracing(config: &LoggingConfig) -> miette::Result<()> {
     Ok(())
 }
 
-pub type GenesisFiles = (ByronFile, ShelleyFile, AlonzoFile, ConwayFile);
-
-pub fn open_genesis_files(config: &GenesisConfig) -> miette::Result<GenesisFiles> {
+pub fn open_genesis_files(config: &GenesisConfig) -> miette::Result<Genesis> {
     let byron_genesis = pallas::ledger::configs::byron::from_file(&config.byron_path)
         .into_diagnostic()
         .context("loading byron genesis config")?;
@@ -119,12 +153,13 @@ pub fn open_genesis_files(config: &GenesisConfig) -> miette::Result<GenesisFiles
         .into_diagnostic()
         .context("loading conway genesis config")?;
 
-    Ok((
-        byron_genesis,
-        shelley_genesis,
-        alonzo_genesis,
-        conway_genesis,
-    ))
+    Ok(Genesis {
+        byron: byron_genesis,
+        shelley: shelley_genesis,
+        alonzo: alonzo_genesis,
+        conway: conway_genesis,
+        force_protocol: config.force_protocol,
+    })
 }
 
 #[inline]
@@ -183,4 +218,24 @@ pub async fn run_pipeline(pipeline: gasket::daemon::Daemon, exit: CancellationTo
 
 pub fn spawn_pipeline(pipeline: gasket::daemon::Daemon, exit: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(run_pipeline(pipeline, exit))
+}
+
+pub fn cleanup_data(config: &crate::Config) -> Result<(), std::io::Error> {
+    let Some(root) = &config.storage.path else {
+        return Ok(());
+    };
+
+    if root.is_dir() {
+        for entry_result in fs::read_dir(root)? {
+            let entry = entry_result?;
+            let entry_path = entry.path();
+            if entry_path.is_file() {
+                fs::remove_file(&entry_path)?;
+            }
+        }
+        fs::remove_dir(root)?; // Remove the now-empty directory
+    } else {
+        info!("Path is not a directory, ignoring.");
+    }
+    Ok(())
 }

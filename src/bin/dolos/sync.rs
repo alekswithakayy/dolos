@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use miette::{Context, IntoDiagnostic};
 
 #[derive(Debug, clap::Args)]
@@ -10,19 +12,18 @@ pub struct Args {
 pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
     crate::common::setup_tracing(&config.logging)?;
 
-    let (wal, ledger) = crate::common::open_data_stores(config)?;
-
-    let mempool = dolos::mempool::Mempool::new();
-
-    let (byron, shelley, _, _) = crate::common::open_genesis_files(&config.genesis)?;
+    let (wal, ledger, chain) = crate::common::setup_data_stores(config)?;
+    let genesis = Arc::new(crate::common::open_genesis_files(&config.genesis)?);
+    let mempool = dolos::mempool::Mempool::new(genesis.clone(), ledger.clone());
 
     let sync = dolos::sync::pipeline(
         &config.sync,
         &config.upstream,
+        &config.storage,
         wal,
         ledger,
-        byron,
-        shelley,
+        chain,
+        genesis,
         mempool,
         &config.retries,
         args.quit_on_tip,

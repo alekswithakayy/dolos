@@ -17,19 +17,11 @@ const DEFAULT_CACHE_SIZE_MB: usize = 500;
 fn compute_schema_hash(db: &Database) -> Result<Option<String>, LedgerError> {
     let mut hasher = pallas::crypto::hash::Hasher::<160>::new();
 
-    let rx = db
-        .begin_read()
-        .map_err(|e| LedgerError::StorageError(e.into()))?;
+    let rx = db.begin_read()?;
 
-    let names_1 = rx
-        .list_tables()
-        .map_err(|e| LedgerError::StorageError(e.into()))?
-        .map(|t| t.name().to_owned());
+    let names_1 = rx.list_tables()?.map(|t| t.name().to_owned());
 
-    let names_2 = rx
-        .list_multimap_tables()
-        .map_err(|e| LedgerError::StorageError(e.into()))?
-        .map(|t| t.name().to_owned());
+    let names_2 = rx.list_multimap_tables()?.map(|t| t.name().to_owned());
 
     let mut names = names_1.chain(names_2).collect_vec();
 
@@ -55,16 +47,9 @@ fn open_db(path: impl AsRef<Path>, cache_size: Option<usize>) -> Result<Database
     let db = Database::builder()
         .set_repair_callback(|x| warn!(progress = x.progress() * 100f64, "ledger db is repairing"))
         .set_cache_size(1024 * 1024 * cache_size.unwrap_or(DEFAULT_CACHE_SIZE_MB))
-        .create(path)
-        .map_err(|x| LedgerError::StorageError(x.into()))?;
+        .create(path)?;
 
     Ok(db)
-}
-
-impl From<::redb::Error> for LedgerError {
-    fn from(value: ::redb::Error) -> Self {
-        LedgerError::StorageError(value)
-    }
 }
 
 const V1_HASH: &str = "067c3397778523b67202fa0ea720ef4d2c091e30";
@@ -188,7 +173,7 @@ impl LedgerStore {
         }
     }
 
-    pub fn get_pparams(&self, until: BlockSlot) -> Result<Vec<PParamsBody>, LedgerError> {
+    pub fn get_pparams(&self, until: BlockSlot) -> Result<Vec<EraCbor>, LedgerError> {
         match self {
             LedgerStore::SchemaV1(x) => Ok(x.get_pparams(until)?),
             LedgerStore::SchemaV2(x) => Ok(x.get_pparams(until)?),
@@ -239,7 +224,7 @@ impl LedgerStore {
         }
     }
 
-    pub fn apply(&mut self, deltas: &[LedgerDelta]) -> Result<(), LedgerError> {
+    pub fn apply(&self, deltas: &[LedgerDelta]) -> Result<(), LedgerError> {
         match self {
             LedgerStore::SchemaV1(x) => Ok(x.apply(deltas)?),
             LedgerStore::SchemaV2(x) => Ok(x.apply(deltas)?),
@@ -247,7 +232,7 @@ impl LedgerStore {
         }
     }
 
-    pub fn finalize(&mut self, until: BlockSlot) -> Result<(), LedgerError> {
+    pub fn finalize(&self, until: BlockSlot) -> Result<(), LedgerError> {
         match self {
             LedgerStore::SchemaV1(x) => Ok(x.finalize(until)?),
             LedgerStore::SchemaV2(x) => Ok(x.finalize(until)?),
@@ -316,7 +301,7 @@ mod tests {
 
     #[test]
     fn empty_until_cursor() {
-        let mut store = LedgerStore::in_memory_v2().unwrap();
+        let store = LedgerStore::in_memory_v2().unwrap();
 
         assert!(store.is_empty().unwrap());
 
@@ -325,12 +310,7 @@ mod tests {
                 1,
                 pallas::crypto::hash::Hash::new(b"01010101010101010101010101010101".to_owned()),
             )),
-            undone_position: Default::default(),
-            produced_utxo: Default::default(),
-            consumed_utxo: Default::default(),
-            recovered_stxi: Default::default(),
-            undone_utxo: Default::default(),
-            new_pparams: Default::default(),
+            ..Default::default()
         };
 
         store.apply(&[delta]).unwrap();

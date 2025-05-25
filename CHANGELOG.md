@@ -2,11 +2,182 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0] - 2025-05-23
+
+### 🐛 Bug Fixes
+
+- Graceful shutdown when GRPC streams are being served (#499)
+- *(minibf)* Handle Byron addresses correctly (#498)
+- Load Plutus v2 cost models if available in config (#505)
+- *(minibf)* Make cost model names more flexible (#506)
+- Apply latest changes to Mithril flow (#510)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(trp)* Decouple tx3 pallas version from the rest (#503)
+- Fix lint warnings (#507)
+
+## [0.22.0] - 2025-05-12
+
+### 🚀 Features
+
+- *(trp)* Enforce valid TIR version (#497)
+
+### 🐛 Bug Fixes
+
+- *(trp)* Resolve reference inputs (#487)
+- *(minibf)* Use new syntax for capture groups (#492)
+- *(trp)* Fix input selection algorithm (#494)
+- *(trp)* Make cost models index match language view (#495)
+- *(trp)* Implement mapping of datum to IR (#496)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update Pallas to v1.0.0-alpha.2 (#491)
+- Release dolos version 0.22.0
+
+## [0.21.1] - 2025-04-22
+
+### 🐛 Bug Fixes
+
+- Use Conway structs for genesis UTxOs (#480)
+- *(trp)* Use input query criteria correctly (#481)
+
+### 🔧 Continuous Integration
+
+- Update cargo dist version
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.21.1
+
+## [0.21.0] - 2025-04-21
+
+### 🚀 Features
+
+- *(serve)* Add TRP server (#462)
+- Introduce support for ephemeral devents (#475)
+
+### 🐛 Bug Fixes
+
+- *(minibf)* Add missing fields on protocol parameters (#474)
+
+### 📚 Documentation
+
+- Add MiniBF api section (#473)
+- Propose ADR for light consensus (#477)
+
+### 🔧 Continuous Integration
+
+- Trigger docker on `demeter` branch push (#470)
+- Use github ARM runner (#471)
+
+### ⚙️ Miscellaneous Tasks
+
+- Update docs to match v0.20 (#468)
+- *(serve)* Split services into compile-time features (#479)
+- Release dolos version 0.21.0
+
+## [0.20.0] - 2025-04-01
+
+### 🚀 Features
+
+- Implement mini-blockfrost emulator (#447)
+- Implement new chain store (#451)
+- *(minibf)* Implement `/txs/<hash>/cbor` endpoint (#465)
+
+### 🐛 Bug Fixes
+
+- Remove deprecated GenesisValues (#454)
+- Use look-ahead WAL reader for the ledger rebuild procedure (#453)
+- Prompt for storage upgrade on init (#464)
+
+### 📚 Documentation
+
+- Propose ADR for P2P features (#460)
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix lint warnings (#459)
+- Update Pallas to latest main (#463)
+- Add minibf prompt to init (#466)
+- Refresh example configs (#467)
+- Release dolos version 0.20.0
+
+## [0.19.1] - 2025-01-25
+
+### 🐛 Bug Fixes
+
+- Avoid glibc issues by fixing runner os (#442)
+
+### 🔧 Continuous Integration
+
+- Use ubuntu-22.04 tag for runners (#443)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.19.1
+
+## [0.19.0] - 2025-01-24
+
+### 🚀 Features
+
+- *(grpc)* Apply predicate on WatchTx (#384)
+- *(serve)* Implement u5c chain-sync read-tip method (#391)
+- *(grpc)* Honor intersect in watch module (#408)
+- Introduce chain summary struct (#410)
+- Support forcing protocol version at epoch 0 (#417)
+- Implement phase-2 validation / evaluation (#421)
+- Enable npm installer (#425)
+- Call Pallas phase-1 validation during submit (#426)
+- Support shelley genesis utxos (#437)
+- Use hacks to keep gov action pparams updated (#436)
+- Allow configurable ledger prune height (#440)
+
+### 🐛 Bug Fixes
+
+- Add detail to IO error (#392)
+- Relax mutability requirements on key structs (#414)
+- Apply ledger genesis when WAL is at origin (#415)
+- *(serve)* Allow pparams query on origin ledger (#416)
+- Adjust mithril-client features for windows target (#418)
+- Hardcode ada_per_utxo_byte transformation from words to bytes (#423)
+
+### 🚜 Refactor
+
+- Revisit pparams folding approach (#430)
+
+### 📚 Documentation
+
+- Add missing conway_path in config section (#393)
+- Add custom network example (#419)
+
+### 🔧 Continuous Integration
+
+- Disable windows builds until upstream issues are resolved (#441)
+- Build docker image on push to main branch  (#428)
+
+### 🧪 Testing
+
+- Fix genesis utxo tests (#439)
+
+### ⚙️ Miscellaneous Tasks
+
+- Fix lint issues (#388)
+- Fix lint warnings from latest clippy (#390)
+- Add conway genesis files to examples (#380)
+- Fix lint warnings (#438)
+- Release dolos version 0.19.0
+
 ## [0.18.2] - 2024-11-02
 
 ### 🐛 Bug Fixes
 
 - Use s3 accelerate endpoint for snapshots (#377)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release dolos version 0.18.2
 
 ## [0.18.1] - 2024-10-25
 

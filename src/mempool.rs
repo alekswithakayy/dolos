@@ -1,13 +1,18 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
-};
-
+use crate::{ledger::pparams::Genesis, state::LedgerStore};
 use futures_util::StreamExt;
 use itertools::Itertools;
 use pallas::{
     crypto::hash::Hash,
-    ledger::traverse::{MultiEraBlock, MultiEraTx},
+    ledger::{
+        primitives::{NetworkId, TransactionInput},
+        traverse::{MultiEraBlock, MultiEraInput, MultiEraOutput, MultiEraTx},
+        validate::{phase1::validate_tx, utils::AccountState},
+    },
+};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+    sync::{Arc, RwLock},
 };
 use thiserror::Error;
 use tokio::sync::broadcast;
@@ -18,20 +23,27 @@ type TxHash = Hash<32>;
 
 #[derive(Debug, Error)]
 pub enum MempoolError {
-    #[error("decode error: {0}")]
-    DecodeError(pallas::ledger::traverse::Error),
+    #[error("traverse error: {0}")]
+    TraverseError(#[from] pallas::ledger::traverse::Error),
 
-    #[error("plutus scripts not supported")]
+    #[error("decode error: {0}")]
+    DecodeError(#[from] pallas::codec::minicbor::decode::Error),
+
+    #[error("tx validation failed during phase-1: {0}")]
+    Phase1Error(#[from] pallas::ledger::validate::utils::ValidationError),
+
+    #[cfg(feature = "phase2")]
+    #[error("tx evaluation failed during phase-2: {0}")]
+    Phase2Error(#[from] pallas::ledger::validate::phase2::error::Error),
+
+    #[error("state error: {0}")]
+    StateError(#[from] crate::state::LedgerError),
+
+    #[error("plutus not supported")]
     PlutusNotSupported,
 
     #[error("invalid tx: {0}")]
     InvalidTx(String),
-}
-
-impl From<pallas::ledger::traverse::Error> for MempoolError {
-    fn from(value: pallas::ledger::traverse::Error) -> Self {
-        Self::DecodeError(value)
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -70,20 +82,21 @@ struct MempoolState {
 pub struct Mempool {
     mempool: Arc<RwLock<MempoolState>>,
     updates: broadcast::Sender<Event>,
-}
-
-impl Default for Mempool {
-    fn default() -> Self {
-        Self::new()
-    }
+    genesis: Arc<Genesis>,
+    ledger: LedgerStore,
 }
 
 impl Mempool {
-    pub fn new() -> Self {
+    pub fn new(genesis: Arc<Genesis>, ledger: LedgerStore) -> Self {
         let mempool = Arc::new(RwLock::new(MempoolState::default()));
         let (updates, _) = broadcast::channel(16);
 
-        Self { mempool, updates }
+        Self {
+            mempool,
+            updates,
+            genesis,
+            ledger,
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
@@ -110,20 +123,153 @@ impl Mempool {
         );
     }
 
+    pub fn validate(&self, tx: &MultiEraTx) -> Result<(), MempoolError> {
+        let tip = self.ledger.cursor()?;
+
+        let updates: Vec<_> = self
+            .ledger
+            .get_pparams(tip.as_ref().map(|p| p.0).unwrap_or_default())?;
+
+        let updates: Vec<_> = updates.into_iter().map(TryInto::try_into).try_collect()?;
+
+        let eras = crate::ledger::pparams::fold_with_hacks(
+            &self.genesis,
+            &updates,
+            tip.as_ref().unwrap().0,
+        );
+
+        let era = eras.era_for_slot(tip.as_ref().unwrap().0);
+
+        let network_id = match self.genesis.shelley.network_id.as_ref() {
+            Some(network) => match network.as_str() {
+                "Mainnet" => Some(NetworkId::Mainnet.into()),
+                "Testnet" => Some(NetworkId::Testnet.into()),
+                _ => None,
+            },
+            None => None,
+        }
+        .unwrap();
+
+        let env = pallas::ledger::validate::utils::Environment {
+            prot_params: era.pparams.clone(),
+            prot_magic: self.genesis.shelley.network_magic.unwrap(),
+            block_slot: tip.unwrap().0,
+            network_id,
+            acnt: Some(AccountState::default()),
+        };
+
+        let input_refs = tx.requires().iter().map(From::from).collect();
+
+        let utxos = self.ledger.get_utxos(input_refs)?;
+
+        let mut pallas_utxos = pallas::ledger::validate::utils::UTxOs::new();
+
+        for (txoref, eracbor) in utxos.iter() {
+            let tx_in = TransactionInput {
+                transaction_id: txoref.0,
+                index: txoref.1.into(),
+            };
+            let input = MultiEraInput::AlonzoCompatible(<Box<Cow<'_, TransactionInput>>>::from(
+                Cow::Owned(tx_in),
+            ));
+            let output = MultiEraOutput::try_from(eracbor)?;
+            pallas_utxos.insert(input, output);
+        }
+
+        validate_tx(
+            tx,
+            0,
+            &env,
+            &pallas_utxos,
+            &mut pallas::ledger::validate::utils::CertState::default(),
+        )?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "phase2")]
+    pub fn evaluate(
+        &self,
+        tx: &MultiEraTx,
+    ) -> Result<pallas::ledger::validate::phase2::EvalReport, MempoolError> {
+        use crate::ledger::{EraCbor, TxoRef};
+
+        let tip = self.ledger.cursor()?;
+
+        let updates: Vec<_> = self
+            .ledger
+            .get_pparams(tip.as_ref().map(|p| p.0).unwrap_or_default())?;
+
+        let updates: Vec<_> = updates.into_iter().map(TryInto::try_into).try_collect()?;
+
+        let eras = crate::ledger::pparams::fold_with_hacks(
+            &self.genesis,
+            &updates,
+            tip.as_ref().unwrap().0,
+        );
+
+        let slot_config = pallas::ledger::validate::phase2::script_context::SlotConfig {
+            slot_length: eras.edge().pparams.slot_length(),
+            zero_slot: eras.edge().start.slot,
+            zero_time: eras.edge().start.timestamp.timestamp().try_into().unwrap(),
+        };
+
+        let input_refs = tx.requires().iter().map(From::from).collect();
+
+        let utxos: pallas::ledger::validate::utils::UtxoMap = self
+            .ledger
+            .get_utxos(input_refs)?
+            .into_iter()
+            .map(|(TxoRef(a, b), EraCbor(c, d))| {
+                let era = c.try_into().expect("era out of range");
+
+                (
+                    pallas::ledger::validate::utils::TxoRef::from((a, b)),
+                    pallas::ledger::validate::utils::EraCbor::from((era, d)),
+                )
+            })
+            .collect();
+
+        let report = pallas::ledger::validate::phase2::evaluate_tx(
+            tx,
+            &eras.edge().pparams,
+            &utxos,
+            &slot_config,
+        )?;
+
+        Ok(report)
+    }
+
+    #[cfg(feature = "phase2")]
+    pub fn evaluate_raw(
+        &self,
+        cbor: &[u8],
+    ) -> Result<pallas::ledger::validate::phase2::EvalReport, MempoolError> {
+        let tx = MultiEraTx::decode(cbor)?;
+        self.evaluate(&tx)
+    }
+
     pub fn receive_raw(&self, cbor: &[u8]) -> Result<TxHash, MempoolError> {
-        let decoded = MultiEraTx::decode(cbor)?;
+        let tx = MultiEraTx::decode(cbor)?;
 
-        let hash = decoded.hash();
+        self.validate(&tx)?;
 
-        // TODO: we don't phase-2 validate txs before propagating so we could
-        // propagate p2 invalid transactions resulting in collateral loss
+        #[cfg(feature = "phase2")]
+        self.evaluate(&tx)?;
+
+        // if we don't have phase-2 enabled, we reject txs before propagating something
+        // that could result in collateral loss
+        #[cfg(not(feature = "phase2"))]
         if !decoded.redeemers().is_empty() {
             return Err(MempoolError::PlutusNotSupported);
         }
 
+        let hash = tx.hash();
+
         let tx = Tx {
             hash,
-            era: u16::from(decoded.era()) - 1,
+            // TODO: this is a hack to make the era compatible with the ledger
+            era: u16::from(tx.era()) - 1,
             bytes: cbor.into(),
             confirmed: false,
         };
@@ -211,7 +357,7 @@ impl Mempool {
         }
     }
 
-    pub fn apply_block(&mut self, block: &MultiEraBlock) {
+    pub fn apply_block(&self, block: &MultiEraBlock) {
         let mut state = self.mempool.write().unwrap();
 
         if state.acknowledged.is_empty() {
@@ -229,7 +375,7 @@ impl Mempool {
         }
     }
 
-    pub fn undo_block(&mut self, block: &MultiEraBlock) {
+    pub fn undo_block(&self, block: &MultiEraBlock) {
         let mut state = self.mempool.write().unwrap();
 
         if state.acknowledged.is_empty() {

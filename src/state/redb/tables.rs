@@ -66,7 +66,6 @@ impl Iterator for UtxosIterator {
             let k = TxoRef((*hash).into(), idx);
 
             let (era, cbor) = v.value();
-            let era = pallas::ledger::traverse::Era::try_from(era).unwrap();
             let cbor = cbor.to_owned();
             let v = EraCbor(era, cbor);
 
@@ -104,7 +103,6 @@ impl UtxosTable {
         for key in refs {
             if let Some(body) = table.get(&(&key.0 as &[u8; 32], key.1))? {
                 let (era, cbor) = body.value();
-                let era = pallas::ledger::traverse::Era::try_from(era).unwrap();
                 let cbor = cbor.to_owned();
                 let value = EraCbor(era, cbor);
 
@@ -120,7 +118,7 @@ impl UtxosTable {
 
         for (k, v) in delta.produced_utxo.iter() {
             let k: (&[u8; 32], u32) = (&k.0, k.1);
-            let v: (u16, &[u8]) = (v.0.into(), &v.1);
+            let v: (u16, &[u8]) = (v.0, &v.1);
             table.insert(k, v)?;
         }
 
@@ -172,7 +170,7 @@ impl PParamsTable {
         Ok(())
     }
 
-    pub fn get_range(rx: &ReadTransaction, until: BlockSlot) -> Result<Vec<PParamsBody>, Error> {
+    pub fn get_range(rx: &ReadTransaction, until: BlockSlot) -> Result<Vec<EraCbor>, Error> {
         let table = rx.open_table(Self::DEF)?;
 
         let mut out = vec![];
@@ -180,8 +178,7 @@ impl PParamsTable {
         for item in table.range(..until)? {
             let (_, body) = item?;
             let (era, cbor) = body.value();
-            let era = pallas::ledger::traverse::Era::try_from(era).unwrap();
-            out.push(PParamsBody(era, Vec::from(cbor)));
+            out.push(EraCbor(era, Vec::from(cbor)));
         }
 
         Ok(out)
@@ -191,8 +188,8 @@ impl PParamsTable {
         let mut table = wx.open_table(PParamsTable::DEF)?;
 
         if let Some(ChainPoint(slot, _)) = delta.new_position {
-            for PParamsBody(era, body) in delta.new_pparams.iter() {
-                let v: (u16, &[u8]) = (u16::from(*era), body);
+            for EraCbor(era, body) in delta.new_pparams.iter() {
+                let v: (u16, &[u8]) = (*era, body);
                 table.insert(slot, v)?;
             }
         }

@@ -22,7 +22,7 @@ pub type BlockBody = Vec<u8>;
 pub type BlockHeader = Vec<u8>;
 pub type LogSeq = u64;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq)]
 pub enum ChainPoint {
     Origin,
     Specific(BlockSlot, BlockHash),
@@ -41,6 +41,26 @@ impl PartialEq for ChainPoint {
 impl From<ledger::ChainPoint> for ChainPoint {
     fn from(value: ledger::ChainPoint) -> Self {
         crate::wal::ChainPoint::Specific(value.0, value.1)
+    }
+}
+
+impl Ord for ChainPoint {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Origin, Self::Origin) => std::cmp::Ordering::Equal,
+            (Self::Origin, Self::Specific(_, _)) => std::cmp::Ordering::Less,
+            (Self::Specific(_, _), Self::Origin) => std::cmp::Ordering::Greater,
+            (Self::Specific(x, x_hash), Self::Specific(y, y_hash)) => match x.cmp(y) {
+                std::cmp::Ordering::Equal => x_hash.cmp(y_hash),
+                x => x,
+            },
+        }
+    }
+}
+
+impl PartialOrd for ChainPoint {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -118,11 +138,11 @@ pub enum WalError {
     #[error("slot not found in chain {0}")]
     SlotNotFound(BlockSlot),
 
-    #[error("IO error")]
+    #[error("IO error: {0}")]
     IO(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
-pub use reader::{ReadUtils, WalReader};
+pub use reader::{ReadUtils, WalBlockReader, WalReader};
 pub use stream::WalStream;
 pub use writer::WalWriter;
 
@@ -158,6 +178,21 @@ mod tests {
         assert_ne!(
             ChainPoint::Specific(50, slot_to_hash(20)),
             ChainPoint::Specific(50, slot_to_hash(50)),
+        );
+    }
+
+    #[test]
+    fn chainpoint_partial_ord() {
+        assert!(ChainPoint::Origin <= ChainPoint::Origin);
+        assert!(ChainPoint::Origin >= ChainPoint::Origin);
+        assert!(ChainPoint::Origin < ChainPoint::Specific(20, slot_to_hash(20)));
+        assert!(
+            ChainPoint::Specific(19, slot_to_hash(19)) < ChainPoint::Specific(20, slot_to_hash(20))
+        );
+        assert!(
+            ChainPoint::Specific(20, slot_to_hash(20))
+                .cmp(&ChainPoint::Specific(20, slot_to_hash(200)))
+                != std::cmp::Ordering::Equal
         );
     }
 }

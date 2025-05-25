@@ -1,11 +1,9 @@
 use itertools::Itertools as _;
 use pallas::{
     interop::utxorpc as interop,
-    ledger::{
-        configs::{byron, shelley},
-        traverse::{MultiEraBlock, MultiEraTx},
-    },
+    ledger::traverse::{MultiEraBlock, MultiEraTx},
 };
+use pparams::Genesis;
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
@@ -16,48 +14,51 @@ pub mod redb;
 #[derive(Debug, Error)]
 pub enum LedgerError {
     #[error("broken invariant")]
-    BrokenInvariant(#[source] BrokenInvariant),
+    BrokenInvariant(#[from] BrokenInvariant),
 
     #[error("storage error")]
-    StorageError(#[source] ::redb::Error),
+    StorageError(#[from] Box<::redb::Error>),
 
     #[error("address decoding error")]
-    AddressDecoding(pallas::ledger::addresses::Error),
+    AddressDecoding(#[from] pallas::ledger::addresses::Error),
 
     #[error("query not supported")]
     QueryNotSupported,
 
     #[error("invalid store version")]
     InvalidStoreVersion,
+
+    #[error("decoding error")]
+    DecodingError(#[from] pallas::codec::minicbor::decode::Error),
+}
+
+impl From<::redb::DatabaseError> for LedgerError {
+    fn from(value: ::redb::DatabaseError) -> Self {
+        Self::from(Box::new(::redb::Error::from(value)))
+    }
 }
 
 impl From<::redb::TableError> for LedgerError {
     fn from(value: ::redb::TableError) -> Self {
-        Self::StorageError(value.into())
+        Self::from(Box::new(::redb::Error::from(value)))
     }
 }
 
 impl From<::redb::CommitError> for LedgerError {
     fn from(value: ::redb::CommitError) -> Self {
-        Self::StorageError(value.into())
+        Self::from(Box::new(::redb::Error::from(value)))
     }
 }
 
 impl From<::redb::StorageError> for LedgerError {
     fn from(value: ::redb::StorageError) -> Self {
-        Self::StorageError(value.into())
+        Self::from(Box::new(::redb::Error::from(value)))
     }
 }
 
 impl From<::redb::TransactionError> for LedgerError {
     fn from(value: ::redb::TransactionError) -> Self {
-        Self::StorageError(value.into())
-    }
-}
-
-impl From<pallas::ledger::addresses::Error> for LedgerError {
-    fn from(value: pallas::ledger::addresses::Error) -> Self {
-        Self::AddressDecoding(value)
+        Self::from(Box::new(::redb::Error::from(value)))
     }
 }
 
@@ -81,7 +82,7 @@ impl LedgerStore {
         }
     }
 
-    pub fn get_pparams(&self, until: BlockSlot) -> Result<Vec<PParamsBody>, LedgerError> {
+    pub fn get_pparams(&self, until: BlockSlot) -> Result<Vec<EraCbor>, LedgerError> {
         match self {
             LedgerStore::Redb(x) => x.get_pparams(until),
         }
@@ -123,13 +124,13 @@ impl LedgerStore {
         }
     }
 
-    pub fn apply(&mut self, deltas: &[LedgerDelta]) -> Result<(), LedgerError> {
+    pub fn apply(&self, deltas: &[LedgerDelta]) -> Result<(), LedgerError> {
         match self {
             LedgerStore::Redb(x) => x.apply(deltas),
         }
     }
 
-    pub fn finalize(&mut self, until: BlockSlot) -> Result<(), LedgerError> {
+    pub fn finalize(&self, until: BlockSlot) -> Result<(), LedgerError> {
         match self {
             LedgerStore::Redb(x) => x.finalize(until),
         }
@@ -162,7 +163,10 @@ impl interop::LedgerContext for LedgerStore {
             .get_utxos(refs)
             .ok()?
             .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
+            .map(|(k, v)| {
+                let era = v.0.try_into().expect("era out of range");
+                (k.into(), (era, v.1))
+            })
             .collect();
 
         Some(some)
@@ -215,12 +219,10 @@ pub fn load_slice_for_block(
     Ok(LedgerSlice { resolved_inputs })
 }
 
-pub fn apply_block_batch<'a>(
+pub fn calculate_block_batch_deltas<'a>(
     blocks: impl IntoIterator<Item = &'a MultiEraBlock<'a>>,
-    store: &mut LedgerStore,
-    byron: &byron::GenesisFile,
-    shelley: &shelley::GenesisFile,
-) -> Result<(), LedgerError> {
+    store: &LedgerStore,
+) -> Result<Vec<LedgerDelta>, LedgerError> {
     let mut deltas: Vec<LedgerDelta> = vec![];
 
     for block in blocks {
@@ -229,7 +231,15 @@ pub fn apply_block_batch<'a>(
 
         deltas.push(delta);
     }
+    Ok(deltas)
+}
 
+pub fn apply_delta_batch(
+    deltas: Vec<LedgerDelta>,
+    store: &LedgerStore,
+    genesis: &Genesis,
+    max_ledger_history: Option<u64>,
+) -> Result<(), LedgerError> {
     store.apply(&deltas)?;
 
     let tip = deltas
@@ -238,8 +248,21 @@ pub fn apply_block_batch<'a>(
         .map(|x| x.0)
         .unwrap();
 
-    let to_finalize = lastest_immutable_slot(tip, byron, shelley);
+    let to_finalize = max_ledger_history
+        .map(|x| tip - x)
+        .unwrap_or(lastest_immutable_slot(tip, genesis));
+
     store.finalize(to_finalize)?;
 
     Ok(())
+}
+
+pub fn apply_block_batch<'a>(
+    blocks: impl IntoIterator<Item = &'a MultiEraBlock<'a>>,
+    store: &LedgerStore,
+    genesis: &Genesis,
+    max_ledger_history: Option<u64>,
+) -> Result<(), LedgerError> {
+    let deltas = calculate_block_batch_deltas(blocks, store)?;
+    apply_delta_batch(deltas, store, genesis, max_ledger_history)
 }

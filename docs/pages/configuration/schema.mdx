@@ -9,13 +9,16 @@ network_magic = 1
 is_testnet = true
 
 [storage]
+version = "v1"
 path = "data"
 max_wal_history = 10000
+max_chain_history = 10000
 
 [genesis]
 byron_path = "byron.json"
 shelley_path = "shelley.json"
 alonzo_path = "alonzo.json"
+conway_path = "conway.json"
 
 [sync]
 pull_batch_size = 100
@@ -25,6 +28,9 @@ prune_height = 200
 
 [serve.grpc]
 listen_address = "[::]:50051"
+
+[serve.minibf]
+listen_address = "[::]:3000"
 
 [serve.ouroboros]
 listen_path = "dolos.socket"
@@ -65,32 +71,41 @@ The `upstream` section defines how to connect to the Ouroboros network to synchr
 
 The `storage` section controls how Dolos stores data in the local file system. This includes immutable chain blocks, the write ahead log and the ledger state.
 
-| property        | type    | example  |
-| --------------- | ------- | -------- |
-| path            | string  | "./data" |
-| wal_cache       | integer | 50       |
-| ledger_cache    | integer | 500      |
-| max_wal_history | integer | 10000    |
+| property               | type    | example  |
+| ---------------------- | ------- | -------- |
+| path                   | string  | "./data" |
+| version                | string  | "v1"     |
+| wal_cache              | integer | 50       |
+| ledger_cache           | integer | 500      |
+| max_wal_history        | integer | 10000    |
+| max_ledger_history     | integer | 10000    |
+| max_chain_history      | integer | 10000    |
 
 - `path`: is the root directory where all data will be stored.
+- `version`: after Dolos v0.20.0, we've introduced a versioning system to handle schema upgrades more gracefully.
 - `wal_cache`: the size (in Mb) of the memory cache for the wal db.
 - `ledger_cache`: the size (in Mb) of the memory cache for the ledger db.
-- `max_wal_history`: the max number of slots to keep in the WAL.
+- `max_wal_history`: the max number of slots to keep in the WAL. It makes sense to set this to the amount of mutable slots of the chain.
+- `max_ledger_history`: the max number of slots to keep in the ledger store before pruning. If not set, the ledger will prune past the immutable slot.
+- `max_chain_history`: the max number of slots to keep in the historic chain store before pruning. If not set, this won't be pruned.
 
 ## `genesis` section
 
 Dolos requires Cardano genesis data to operate. For simplicity sake, we've decided to follow the schema for the existing .json files used by the Haskell node. The `genesis` section indicates how to locate the different json files with genesis data for each required era. The content of the json files should match the ones used in the Haskell node.
 
-| property     | type   | example          |
-| ------------ | ------ | ---------------- |
-| byron_path   | string | "./byron.json"   |
-| shelley_path | string | "./shelley.json" |
-| alonzo_path  | string | "./alonzo.json"  |
+| property       | type    | example          |
+| -------------  | ------- | ---------------- |
+| byron_path     | string  | "./byron.json"   |
+| shelley_path   | string  | "./shelley.json" |
+| alonzo_path    | string  | "./alonzo.json"  |
+| conway_path    | string  | "./conway.json"  |
+| force_protocol | integer | 2                |
 
 - `byron_path`: file path to the Byron json genesis file
 - `shelley_path`: file path to the Shelley json genesis file
 - `alonzo_path`: file path to the Alonzo json genesis file
-
+- `conway_path`: file path to the Conway json genesis file
+- `force_protocol`: (optional) the protocol version to force the node to start from. This is useful for networks such as `preview` which skips the Byron era.
 
 ### `sync` section
 
@@ -122,12 +137,22 @@ The `serve.grpc` section controls the options for the gRPC endpoint that can be 
 
 - `listen_address`: the local address (`IP:PORT`) to listen for incoming gRPC connections (`[::]` represents any IP address).
 
+## `serve.minibf` section
+
+The `serve.minibf` section controls the options for the HTTP endpoint that hosts a Blockfrost-like endpoint.
+
+| property       | type   | example      |
+| -------------- | ------ | ------------ |
+| listen_address | string | "[::]:3000"  |
+
+- `listen_address`: the local address (`IP:PORT`) to listen for incoming connections (`[::]` represents any IP address).
+
 ## `serve.ouroboros` section
 
 The `serve.ouroboros` section controls the options for the Ouroboros mini-protocols endpoint that can be used by clients.
 
-| property       | type   | example           |
-| -------------- | ------ | ----------------- |
+| property    | type   | example        |
+| ----------- | ------ | -------------- |
 | listen_path | string | "dolos.socket" |
 
 - `listen_path`: the file path for the unix socket that will listen for Ouroboros node-to-client mini-protocols.
@@ -136,9 +161,9 @@ The `serve.ouroboros` section controls the options for the Ouroboros mini-protoc
 
 The `relay` section controls the options for handling inbound connection from other peers through Ouroboros node-to-node miniprotocols.
 
-| property       | type   | example           |
-| -------------- | ------ | ----------------- |
-| listen_address | string | "[::]:50051"      |
+| property       | type   | example      |
+| -------------- | ------ | ------------ |
+| listen_address | string | "[::]:50051" |
 
 - `listen_address`: the local address (`IP:PORT`) to listen for incoming Ouroboros connections (`[::]` represents any IP address).
 
@@ -146,8 +171,8 @@ The `relay` section controls the options for handling inbound connection from ot
 
 The `logging` section controls the logging options to define the level of details to output.
 
-| property  | type   | example                                             |
-| --------- | ------ | --------------------------------------------------- |
-| max_level | option | "debug" / "info" / "warn" / "error"                 |
+| property       | type   | example                                        |
+| -------------- | ------ | ---------------------------------------------- |
+| max_level      | option | "debug" / "info" / "warn" / "error"            |
 | include_pallas | option | wheter to include logs from the Pallas library |
-| include_tonic | option | wheter to include logs from the Tonic library   |
+| include_tonic  | option | wheter to include logs from the Tonic library  |

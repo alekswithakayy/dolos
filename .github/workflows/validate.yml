@@ -3,9 +3,9 @@
 on:
   push:
     branches:
-     - '**'
+      - "**"
     tags-ignore:
-     - v*
+      - v*
 
 name: Validate
 
@@ -15,7 +15,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macOS-latest]
+        os: [
+            # windows-latest,
+            ubuntu-22.04,
+            macos-14,
+            macos-13,
+          ]
         rust: [stable]
     runs-on: ${{ matrix.os }}
     steps:

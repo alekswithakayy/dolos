@@ -1,9 +1,10 @@
+use itertools::Itertools;
 use miette::IntoDiagnostic;
-use pallas::ledger::traverse::MultiEraBlock;
+use pallas::ledger::traverse::{MultiEraBlock, MultiEraUpdate};
 use std::path::Path;
 
 use dolos::{
-    ledger::ChainPoint,
+    ledger::{ChainPoint, EraCbor},
     wal::{redb::WalStore, RawBlock, ReadUtils, WalReader as _},
 };
 
@@ -39,7 +40,7 @@ pub struct Args {}
 pub fn run(config: &crate::Config, _args: &Args) -> miette::Result<()> {
     crate::common::setup_tracing(&config.logging)?;
 
-    let (wal, ledger) = crate::common::open_data_stores(config)?;
+    let (wal, ledger, _) = crate::common::setup_data_stores(config)?;
 
     if let Some((seq, point)) = wal.crawl_from(None).unwrap().next() {
         println!("found WAL start");
@@ -94,6 +95,30 @@ pub fn run(config: &crate::Config, _args: &Args) -> miette::Result<()> {
     // );
 
     //dbg!(merged);
+
+    println!("---");
+
+    let curr_point = ledger
+        .cursor()
+        .into_diagnostic()?
+        .ok_or(miette::miette!("Uninitialized ledger."))?;
+
+    let updates: Vec<_> = ledger.get_pparams(curr_point.0).into_diagnostic()?;
+
+    let updates: Vec<_> = updates
+        .iter()
+        .map(|EraCbor(era, cbor)| {
+            let era = (*era).try_into().expect("era out of range");
+            MultiEraUpdate::decode_for_era(era, cbor)
+        })
+        .try_collect()
+        .into_diagnostic()?;
+
+    let genesis = crate::common::open_genesis_files(&config.genesis)?;
+
+    let eras = dolos::ledger::pparams::fold(&genesis, &updates);
+
+    println!("{:?}", eras);
 
     println!("---");
 

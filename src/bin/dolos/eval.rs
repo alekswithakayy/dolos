@@ -1,11 +1,11 @@
-use dolos::ledger::{PParamsBody, TxoRef};
+use dolos::ledger::{EraCbor, TxoRef};
 use itertools::*;
 use miette::{Context, IntoDiagnostic};
 use pallas::{
-    applying::{validate_tx, CertState, Environment as ValidationContext, UTxOs},
     ledger::traverse::{Era, MultiEraInput, MultiEraOutput, MultiEraUpdate},
+    ledger::validate::utils::{CertState, Environment as ValidationContext, UTxOs},
 };
-use std::{borrow::Cow, path::PathBuf};
+use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -28,7 +28,8 @@ pub struct Args {
 pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
     crate::common::setup_tracing(&config.logging)?;
 
-    let (_, ledger) = crate::common::open_data_stores(config)?;
+    let (_, ledger, _) = crate::common::setup_data_stores(config)?;
+    let genesis = Arc::new(crate::common::open_genesis_files(&config.genesis)?);
 
     let cbor = std::fs::read_to_string(&args.file)
         .into_diagnostic()
@@ -55,11 +56,16 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
         .into_diagnostic()
         .context("resolving utxo")?;
 
-    let (byron, shelley, alonzo, conway) = crate::common::open_genesis_files(&config.genesis)?;
-
     let mut utxos2 = UTxOs::new();
 
     for (ref_, body) in resolved.iter() {
+        let EraCbor(era, cbor) = body;
+
+        let era = (*era)
+            .try_into()
+            .into_diagnostic()
+            .context("era out of range")?;
+
         let txin = pallas::ledger::primitives::byron::TxIn::Variant0(
             pallas::codec::utils::CborWrap((ref_.0, ref_.1)),
         );
@@ -68,7 +74,7 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
             <Box<Cow<'_, pallas::ledger::primitives::byron::TxIn>>>::from(Cow::Owned(txin)),
         );
 
-        let value = MultiEraOutput::decode(body.0, &body.1)
+        let value = MultiEraOutput::decode(era, cbor)
             .into_diagnostic()
             .context("decoding utxo")?;
 
@@ -82,25 +88,20 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
 
     let updates: Vec<_> = updates
         .iter()
-        .map(|PParamsBody(era, cbor)| -> miette::Result<MultiEraUpdate> {
-            MultiEraUpdate::decode_for_era(*era, cbor).into_diagnostic()
+        .map(|EraCbor(era, cbor)| -> miette::Result<MultiEraUpdate> {
+            let era = (*era).try_into().expect("era out of range");
+            MultiEraUpdate::decode_for_era(era, cbor).into_diagnostic()
         })
         .try_collect()?;
 
-    let pparams = dolos::ledger::pparams::fold_pparams(
-        &dolos::ledger::pparams::Genesis {
-            byron: &byron,
-            shelley: &shelley,
-            alonzo: &alonzo,
-            conway: &conway,
-        },
-        &updates,
-        args.epoch,
-    );
+    let pparams = dolos::ledger::pparams::fold(&genesis, &updates)
+        .edge()
+        .pparams
+        .clone();
 
     let context = ValidationContext {
         block_slot: args.block_slot,
-        prot_magic: config.upstream.network_magic as u32,
+        prot_magic: config.upstream.network_magic().unwrap() as u32,
         network_id: args.network_id,
         prot_params: pparams,
         acnt: None,
@@ -108,7 +109,8 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
 
     let mut cert_state = CertState::default();
 
-    validate_tx(&tx, 0, &context, &utxos2, &mut cert_state).unwrap();
+    pallas::ledger::validate::phase1::validate_tx(&tx, 0, &context, &utxos2, &mut cert_state)
+        .unwrap();
 
     Ok(())
 }

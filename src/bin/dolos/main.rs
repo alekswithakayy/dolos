@@ -64,38 +64,12 @@ struct Cli {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct StorageConfig {
-    path: std::path::PathBuf,
-
-    /// Size (in Mb) of memory allocated for WAL caching
-    wal_cache: Option<usize>,
-
-    /// Size (in Mb) of memory allocated for ledger caching
-    ledger_cache: Option<usize>,
-
-    /// Maximum number of slots (not blocks) to keep in the WAL
-    max_wal_history: Option<u64>,
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        Self {
-            path: PathBuf::from("data"),
-            wal_cache: None,
-            ledger_cache: None,
-            max_wal_history: None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
 pub struct GenesisConfig {
     byron_path: PathBuf,
     shelley_path: PathBuf,
     alonzo_path: PathBuf,
     conway_path: PathBuf,
-    // TODO: add hash of genesis for runtime verification
-    // hash: String,
+    force_protocol: Option<usize>,
 }
 
 impl Default for GenesisConfig {
@@ -105,6 +79,7 @@ impl Default for GenesisConfig {
             shelley_path: PathBuf::from("shelley.json"),
             alonzo_path: PathBuf::from("alonzo.json"),
             conway_path: PathBuf::from("conway.json"),
+            force_protocol: None,
         }
     }
 }
@@ -113,6 +88,7 @@ impl Default for GenesisConfig {
 pub struct MithrilConfig {
     aggregator: String,
     genesis_key: String,
+    ancillary_key: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,6 +110,12 @@ pub struct LoggingConfig {
 
     #[serde(default)]
     include_grpc: bool,
+
+    #[serde(default)]
+    include_trp: bool,
+
+    #[serde(default)]
+    include_minibf: bool,
 }
 
 impl Default for LoggingConfig {
@@ -143,6 +125,8 @@ impl Default for LoggingConfig {
             include_tokio: Default::default(),
             include_pallas: Default::default(),
             include_grpc: Default::default(),
+            include_trp: Default::default(),
+            include_minibf: Default::default(),
         }
     }
 }
@@ -150,7 +134,7 @@ impl Default for LoggingConfig {
 #[derive(Serialize, Deserialize)]
 pub struct Config {
     pub upstream: dolos::model::UpstreamConfig,
-    pub storage: StorageConfig,
+    pub storage: dolos::model::StorageConfig,
     pub genesis: GenesisConfig,
     pub sync: dolos::sync::Config,
     pub submit: dolos::model::SubmitConfig,

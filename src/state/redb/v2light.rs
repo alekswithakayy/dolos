@@ -48,7 +48,7 @@ impl LedgerStore {
         Ok(last)
     }
 
-    pub fn apply(&mut self, deltas: &[LedgerDelta]) -> Result<(), Error> {
+    pub fn apply(&self, deltas: &[LedgerDelta]) -> Result<(), Error> {
         let mut wx = self.db().begin_write()?;
         wx.set_durability(Durability::Eventual);
 
@@ -63,7 +63,7 @@ impl LedgerStore {
         Ok(())
     }
 
-    pub fn finalize(&mut self, until: BlockSlot) -> Result<(), Error> {
+    pub fn finalize(&self, until: BlockSlot) -> Result<(), Error> {
         let rx = self.db().begin_read()?;
         let cursors = tables::CursorTable::get_range(&rx, until)?;
 
@@ -103,7 +103,7 @@ impl LedgerStore {
         tables::UtxosTable::get_sparse(&rx, refs)
     }
 
-    pub fn get_pparams(&self, until: BlockSlot) -> Result<Vec<PParamsBody>, Error> {
+    pub fn get_pparams(&self, until: BlockSlot) -> Result<Vec<EraCbor>, Error> {
         let rx = self.db().begin_read()?;
         tables::PParamsTable::get_range(&rx, until)
     }
@@ -129,12 +129,7 @@ impl LedgerStore {
 
             let delta = LedgerDelta {
                 produced_utxo: chunk.into_iter().collect(),
-                new_position: Default::default(),
-                undone_position: Default::default(),
-                consumed_utxo: Default::default(),
-                recovered_stxi: Default::default(),
-                undone_utxo: Default::default(),
-                new_pparams: Default::default(),
+                ..Default::default()
             };
 
             tables::FilterIndexes::apply(&wx, &delta)?;
