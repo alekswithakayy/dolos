@@ -4,12 +4,12 @@ use pallas::ledger::addresses::Address;
 use pallas::ledger::traverse::{ComputeHash, MultiEraBlock, MultiEraOutput};
 use std::hash::{DefaultHasher, Hash as _, Hasher};
 
-use crate::ledger::LedgerDelta;
-use crate::model::BlockSlot;
+use dolos_core::{ArchiveError, BlockSlot, LedgerDelta};
 
-type Error = crate::chain::ChainError;
+type Error = super::RedbArchiveError;
 
 pub struct AddressApproxIndexTable;
+
 impl AddressApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("byaddress");
@@ -32,6 +32,7 @@ impl AddressApproxIndexTable {
 }
 
 pub struct AddressPaymentPartApproxIndexTable;
+
 impl AddressPaymentPartApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("bypayment");
@@ -57,6 +58,7 @@ impl AddressPaymentPartApproxIndexTable {
 }
 
 pub struct AddressStakePartApproxIndexTable;
+
 impl AddressStakePartApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("bystake");
@@ -82,6 +84,7 @@ impl AddressStakePartApproxIndexTable {
 }
 
 pub struct AssetApproxIndexTable;
+
 impl AssetApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("byasset");
@@ -104,6 +107,7 @@ impl AssetApproxIndexTable {
 }
 
 pub struct BlockHashApproxIndexTable;
+
 impl BlockHashApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("byblockhash");
@@ -129,6 +133,7 @@ impl BlockHashApproxIndexTable {
 }
 
 pub struct BlockNumberApproxIndexTable;
+
 impl BlockNumberApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("byblocknumber");
@@ -153,6 +158,7 @@ impl BlockNumberApproxIndexTable {
 }
 
 pub struct DatumHashApproxIndexTable;
+
 impl DatumHashApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("bydatum");
@@ -178,6 +184,7 @@ impl DatumHashApproxIndexTable {
 }
 
 pub struct PolicyApproxIndexTable;
+
 impl PolicyApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("bypolicy");
@@ -200,6 +207,7 @@ impl PolicyApproxIndexTable {
 }
 
 pub struct ScriptHashApproxIndexTable;
+
 impl ScriptHashApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("byscript");
@@ -225,6 +233,7 @@ impl ScriptHashApproxIndexTable {
 }
 
 pub struct TxHashApproxIndexTable;
+
 impl TxHashApproxIndexTable {
     pub const DEF: MultimapTableDefinition<'static, u64, u64> =
         MultimapTableDefinition::new("bytx");
@@ -247,6 +256,7 @@ impl TxHashApproxIndexTable {
 }
 
 pub struct Indexes;
+
 impl Indexes {
     pub fn initialize(wx: &WriteTransaction) -> Result<(), Error> {
         wx.open_multimap_table(AddressApproxIndexTable::DEF)?;
@@ -340,8 +350,8 @@ impl Indexes {
         if let Some(point) = &delta.new_position {
             let slot = point.0;
 
-            let block =
-                MultiEraBlock::decode(&delta.new_block).map_err(Error::BlockDecodingError)?;
+            let block = MultiEraBlock::decode(&delta.new_block)
+                .map_err(ArchiveError::BlockDecodingError)?;
 
             Self::insert(
                 wx,
@@ -350,6 +360,7 @@ impl Indexes {
                 vec![block.hash().to_vec()],
                 slot,
             )?;
+
             Self::insert(
                 wx,
                 BlockNumberApproxIndexTable::DEF,
@@ -359,6 +370,7 @@ impl Indexes {
             )?;
 
             let tx_hashes = block.txs().iter().map(|tx| tx.hash().to_vec()).collect();
+
             Self::insert(
                 wx,
                 TxHashApproxIndexTable::DEF,
@@ -377,6 +389,7 @@ impl Indexes {
                         .collect_vec()
                 })
                 .collect_vec();
+
             Self::insert(
                 wx,
                 ScriptHashApproxIndexTable::DEF,
@@ -395,6 +408,7 @@ impl Indexes {
                         .collect_vec()
                 })
                 .collect_vec();
+
             Self::insert(
                 wx,
                 DatumHashApproxIndexTable::DEF,
@@ -410,8 +424,9 @@ impl Indexes {
             let mut assets = vec![];
 
             for (_, body) in delta.produced_utxo.iter().chain(delta.consumed_utxo.iter()) {
-                let utxo = MultiEraOutput::try_from(body).map_err(Error::DecodingError)?;
-                match utxo.address()? {
+                let utxo = MultiEraOutput::try_from(body).map_err(ArchiveError::DecodingError)?;
+
+                match utxo.address().map_err(ArchiveError::AddressDecoding)? {
                     Address::Shelley(addr) => {
                         addresses.push(addr.to_vec());
                         address_payment_parts.push(addr.payment().to_vec());
@@ -445,6 +460,7 @@ impl Indexes {
                 addresses,
                 slot,
             )?;
+
             Self::insert(
                 wx,
                 AddressPaymentPartApproxIndexTable::DEF,
@@ -452,6 +468,7 @@ impl Indexes {
                 address_payment_parts,
                 slot,
             )?;
+
             Self::insert(
                 wx,
                 AddressStakePartApproxIndexTable::DEF,
@@ -459,6 +476,7 @@ impl Indexes {
                 address_stake_parts,
                 slot,
             )?;
+
             Self::insert(
                 wx,
                 PolicyApproxIndexTable::DEF,
@@ -466,6 +484,7 @@ impl Indexes {
                 policies,
                 slot,
             )?;
+
             Self::insert(
                 wx,
                 AssetApproxIndexTable::DEF,
@@ -478,8 +497,8 @@ impl Indexes {
         if let Some(point) = &delta.undone_position {
             let slot = point.0;
 
-            let block =
-                MultiEraBlock::decode(&delta.undone_block).map_err(Error::BlockDecodingError)?;
+            let block = MultiEraBlock::decode(&delta.undone_block)
+                .map_err(ArchiveError::BlockDecodingError)?;
 
             Self::insert(
                 wx,
@@ -548,8 +567,9 @@ impl Indexes {
             let mut assets = vec![];
 
             for (_, body) in delta.recovered_stxi.iter().chain(delta.undone_utxo.iter()) {
-                let utxo = MultiEraOutput::try_from(body).map_err(Error::DecodingError)?;
-                match utxo.address()? {
+                let utxo = MultiEraOutput::try_from(body).map_err(ArchiveError::DecodingError)?;
+
+                match utxo.address().map_err(ArchiveError::AddressDecoding)? {
                     Address::Shelley(addr) => {
                         addresses.push(addr.to_vec());
                         address_payment_parts.push(addr.payment().to_vec());

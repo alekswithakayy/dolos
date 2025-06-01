@@ -1,4 +1,3 @@
-use dolos::ledger::{EraCbor, TxoRef};
 use itertools::*;
 use miette::{Context, IntoDiagnostic};
 use pallas::{
@@ -6,6 +5,8 @@ use pallas::{
     ledger::validate::utils::{CertState, Environment as ValidationContext, UTxOs},
 };
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
+
+use dolos::core::{EraCbor, StateStore as _, TxoRef};
 
 #[derive(Debug, clap::Args)]
 pub struct Args {
@@ -94,7 +95,7 @@ pub fn run(config: &super::Config, args: &Args) -> miette::Result<()> {
         })
         .try_collect()?;
 
-    let pparams = dolos::ledger::pparams::fold(&genesis, &updates)
+    let pparams = dolos::cardano::pparams::fold(&genesis, &updates)
         .edge()
         .pparams
         .clone();
