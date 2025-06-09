@@ -101,33 +101,33 @@ pub fn run(config: &crate::Config, args: &Args, feedback: &Feedback) -> miette::
         blocks.last().inspect(|b| progress.set_position(b.slot()));
     }
 
-    let ledger_path = root.join("ledger");
+    // let ledger_path = root.join("ledger");
 
-    let disk = dolos::state::redb::LedgerStore::open_v2_light(ledger_path, None)
-        .map_err(StateError::from)
-        .into_diagnostic()
-        .context("opening ledger db")?;
+    // let disk = dolos::state::redb::LedgerStore::open_v2_light(ledger_path, None)
+    //     .map_err(StateError::from)
+    //     .into_diagnostic()
+    //     .context("opening ledger db")?;
 
-    let disk = dolos::state::LedgerStore::Redb(disk);
+    // let disk = dolos::state::LedgerStore::Redb(disk);
 
-    let pb = feedback.indeterminate_progress_bar();
-    pb.set_message("copying memory ledger into disc");
+    // let pb = feedback.indeterminate_progress_bar();
+    // pb.set_message("copying memory ledger into disc");
 
-    light
-        .copy(&disk)
-        .into_diagnostic()
-        .context("copying from memory db into disc")?;
+    // light
+    //     .copy(&disk)
+    //     .into_diagnostic()
+    //     .context("copying from memory db into disc")?;
 
-    pb.abandon_with_message("ledger copy to disk finished");
+    // pb.abandon_with_message("ledger copy to disk finished");
 
-    let pb = feedback.indeterminate_progress_bar();
-    pb.set_message("creating indexes");
+    // let pb = feedback.indeterminate_progress_bar();
+    // pb.set_message("creating indexes");
 
-    disk.upgrade()
-        .into_diagnostic()
-        .context("creating indexes")?;
+    // disk.upgrade()
+    //     .into_diagnostic()
+    //     .context("creating indexes")?;
 
-    pb.abandon_with_message("indexes created");
+    // pb.abandon_with_message("indexes created");
 
     Ok(())
 }

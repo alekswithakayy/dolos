@@ -1,4 +1,3 @@
-use crate::ledger;
 use itertools::Itertools;
 use pallas::network::miniprotocols::Point as PallasPoint;
 use serde::{Deserialize, Serialize};
@@ -35,12 +34,6 @@ impl PartialEq for ChainPoint {
             (Self::Origin, Self::Origin) => true,
             _ => false,
         }
-    }
-}
-
-impl From<ledger::ChainPoint> for ChainPoint {
-    fn from(value: ledger::ChainPoint) -> Self {
-        crate::wal::ChainPoint::Specific(value.0, value.1)
     }
 }
 

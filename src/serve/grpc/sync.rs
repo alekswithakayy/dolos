@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tonic::{Request, Response, Status};
 
 use dolos_core::ArchiveStore as _;
+use dolos_core::StateStore;
 
 use crate::chain::ChainStore;
 use crate::prelude::BlockBody;
@@ -218,6 +219,15 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
 
         let forward = wal::WalStream::start(wal.clone(), from_seq, self.cancellation_token.clone())
             .skip(1)
+            .filter_map(|(wal_seq, log)| async move {
+                match &log {
+                    wal::LogValue::Apply(x) => match probe::block_era(x.body.as_ref()) {
+                        probe::Outcome::EpochBoundary => None,
+                        _ => Some((wal_seq, log)),
+                    },
+                    _ => Some((wal_seq, log)),
+                }
+            })
             .then(move |(wal_seq, log)| {
                 let mapper = mapper.clone();
                 let ledger = ledger.clone();
@@ -227,7 +237,12 @@ impl u5c::sync::sync_service_server::SyncService for SyncServiceImpl {
                     // Wait for ledger to catch up before processing the block
                     loop {
                         if let Ok(Some(ledger_cursor)) = ledger.cursor() {
-                            let ledger_seq = wal.assert_point(&ledger_cursor.into()).unwrap();
+                            let ledger_seq = wal
+                                .assert_point(&wal::ChainPoint::Specific(
+                                    ledger_cursor.0,
+                                    ledger_cursor.1,
+                                ))
+                                .unwrap();
                             // Check if ledger has caught up to this block
                             if ledger_seq >= wal_seq {
                                 break;
